@@ -123,21 +123,29 @@ export class ScreenController {
     if (this.tracking?.page === page) return this.tracking;
     this.tracking?.detach();
     const tracking: Tracking = { page, generation: 0, navigations: new Set(), waiters: new Set(), detach: () => {
-      page.off('framenavigated', onNavigation); page.off('request', onRequest); page.off('requestfinished', onRequestDone); page.off('requestfailed', onRequestDone);
-      page.off('popup', onPopup); page.off('filechooser', onFileChooser); page.off('crash', onCrash);
+      page.off('framenavigated', onNavigation); page.off('request', onRequest); page.off('requestfinished', onRequestFinished); page.off('requestfailed', onRequestFailed);
+      page.off('popup', onPopup); page.off('filechooser', onFileChooser); page.off('crash', onCrash); page.off('download', onDownload);
     } };
     const wake = () => { for (const waiter of tracking.waiters) waiter(); };
     // Subframe content can change like any other page content; only a main-frame navigation replaces the observed document.
     const onNavigation = (frame: Frame) => { if (frame !== page.mainFrame()) return; tracking.generation++; tracking.navigations.clear(); tracking.interrupt?.abort(); wake(); };
+    const settled = (request: Request | null) => { if (request && tracking.navigations.delete(request)) wake(); };
     const onRequest = (request: Request) => {
+      settled(request.redirectedFrom());
       try { if (request.isNavigationRequest() && request.frame() === page.mainFrame()) tracking.navigations.add(request); } catch { /* A subframe navigation request can precede its Frame. */ }
     };
-    const onRequestDone = (request: Request) => { if (tracking.navigations.delete(request)) wake(); };
+    // A finished response is not yet a committed document: some engines report the body before the commit.
+    // It stays pending until framenavigated, a redirect, a download or failure, unless its status never commits.
+    const onRequestFinished = (request: Request) => {
+      if (tracking.navigations.has(request)) void request.response().then(response => { if (!response || [204,205].includes(response.status())) settled(request); }, () => settled(request));
+    };
+    const onRequestFailed = (request: Request) => settled(request);
+    const onDownload = () => { tracking.navigations.clear(); wake(); };
     const onPopup = (popup: Page) => { tracking.popup = popup; };
     const onFileChooser = () => { tracking.fileChooser = true; };
     const onCrash = () => { tracking.crashed = true; };
-    page.on('framenavigated', onNavigation); page.on('request', onRequest); page.on('requestfinished', onRequestDone); page.on('requestfailed', onRequestDone);
-    page.on('popup', onPopup); page.on('filechooser', onFileChooser); page.on('crash', onCrash);
+    page.on('framenavigated', onNavigation); page.on('request', onRequest); page.on('requestfinished', onRequestFinished); page.on('requestfailed', onRequestFailed);
+    page.on('popup', onPopup); page.on('filechooser', onFileChooser); page.on('crash', onCrash); page.on('download', onDownload);
     return this.tracking = tracking;
   }
   /** The latest observation, when cheap page, navigation and viewport checks still hold. */
@@ -146,7 +154,7 @@ export class ScreenController {
     return observation && observation.page === page && this.tracking?.page === page && observation.generation === this.tracking.generation &&
       dimensionsEqual(observation.configured, page.viewportSize()) ? observation : undefined;
   }
-  /** Waits for a started main-frame navigation to commit or end, then for DOMContentLoaded, within settleMs of the budget. Its own timeout only ends the wait. */
+  /** Waits for a started main-frame navigation to commit or end without a document, then for DOMContentLoaded, within settleMs of the budget. Its own timeout only ends the wait. */
   private async settle(page: Page, tracking: Tracking, op: OperationContext): Promise<void> {
     const signal = AbortSignal.any([op.signal, AbortSignal.timeout(Math.min(op.timeoutMs, settleMs))]);
     try {

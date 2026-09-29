@@ -83,6 +83,20 @@ test('a navigation started by an input settles into a fresh image instead of a s
  await core.screen({action:'click',x:60,y:40,observationId:seen.observationId});
  assert.equal(await page.locator('button').textContent(),'Clicked');
 });
+test('a navigation body reported before its commit still settles into the new document',async t=>{
+ const {core,page}=await fixture(t);
+ const s=await site(t,(req,res)=>{res.setHeader('content-type','text/html');
+  if(req.url==='/next'){setTimeout(()=>res.end(button('Next page')),50);return;}
+  res.end('<a href="/next" style="position:absolute;left:20px;top:20px;width:150px;height:40px;display:block">Go next</a>');});
+ // Firefox can report requestfinished before the main-frame commit; delaying framenavigated reproduces that order on every engine.
+ const on=page.on.bind(page);page.on=(event,listener)=>on(event,event==='framenavigated'?frame=>setTimeout(()=>listener(frame),150):listener);
+ await page.goto(s.url);
+ let seen=await core.screen({action:'look'});
+ seen=await core.screen({action:'click',x:60,y:40,observationId:seen.observationId});
+ assert.equal(seen.navigated,true);assert.equal(new URL(page.url()).pathname,'/next');
+ await core.screen({action:'click',x:60,y:40,observationId:seen.observationId});
+ assert.equal(await page.locator('button').textContent(),'Clicked');
+});
 test('look waits for a pending main-frame navigation and observes the new document',async t=>{
  const {core,page}=await fixture(t);let requested,respond;const navigation=new Promise(resolve=>{requested=resolve;});
  const s=await site(t,(req,res)=>{res.setHeader('content-type','text/html');
@@ -102,6 +116,15 @@ test('navigations that keep interrupting the retake return STALE_SCREEN, not a c
  await assert.rejects(core.screen({action:'click',x:60,y:40,observationId:seen.observationId}),error=>{assert.equal(error.code,'STALE_SCREEN');return true;});
  assert.equal(await page.locator('button').textContent(),'Clicked');
  for(let i=0;i<5;i++)await assert.rejects(core.screen({action:'look'}),error=>{assert.equal(error.code,'STALE_SCREEN');return true;});
+});
+test('an input navigation that ends without a document does not hold the capture',async t=>{
+ const {core,page}=await fixture(t);
+ const s=await site(t,(req,res)=>{if(req.url==='/empty'){setTimeout(()=>{res.statusCode=204;res.end();},100);return;}
+  res.setHeader('content-type','text/html');res.end('<a href="/empty" style="position:absolute;left:20px;top:20px;width:150px;height:40px;display:block">Nothing</a>');});
+ await page.goto(s.url);
+ const seen=await core.screen({action:'look'}),started=performance.now();
+ const r=await core.screen({action:'click',x:60,y:40,observationId:seen.observationId});
+ assert.equal(r.navigated,false);assert.equal(new URL(page.url()).pathname,'/');assert.ok(performance.now()-started<3000,'a 204 navigation must not wait for the settle budget');
 });
 test('failed captures report a reason, and history actions recover without an observationId only then',async t=>{
  const {core,page}=await fixture(t);let fontRequested;const font=new Promise(resolve=>{fontRequested=resolve;});
