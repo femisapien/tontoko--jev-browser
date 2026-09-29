@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { ElementHandle, JSHandle, Page, Frame, Locator } from 'playwright';
 import type { Snapshot, ElementInfo, SemanticEvidence, SemanticLocatorProperty } from './types.js';
-import { BrowserError } from './errors.js';
+import { BrowserError, type BrowserErrorCode } from './errors.js';
 import type * as DOM from './dom.js';
 
 let bundle: string | undefined;
@@ -20,7 +20,7 @@ export interface Captured {
   changeKeys: Record<number, string>;
   dispose(): Promise<void>;
 }
-export async function capture(page: Page, options: { semanticRefs?: boolean; scope?: string; recordsScope?: string; maxElements: number; maxTexts: number; selection?: {frame:Frame;roots:ElementHandle<Element>[]} }): Promise<Captured> {
+export async function capture(page: Page, options: { semanticRefs?: boolean; scope?: string; recordsScope?: string; maxElements: number; maxTexts: number; selection?: {frame:Frame;roots:ElementHandle<Element>[]}; signal?: AbortSignal }): Promise<Captured> {
   const refs = new Map<string, ElementRef>();
   const textRefs = new Map<string, { frame: Frame; handle: ElementHandle<Element>; kind: DOM.SemanticTextKind }>();
   const changeKeys: Record<number,string> = {};
@@ -34,8 +34,10 @@ export async function capture(page: Page, options: { semanticRefs?: boolean; sco
   };
   try {
     for (const [frameIndex, frame] of page.frames().entries()) {
+      // Page evaluation has no Playwright timeout; stop between frames once the operation ended.
+      options.signal?.throwIfAborted();
       if(options.selection && options.selection.frame !== frame)continue;
-      const {selection,...ordinaryOptions}=options;
+      const {selection,signal:_signal,...ordinaryOptions}=options;
       const frameOptions = { ...ordinaryOptions, maxElements: Math.max(0, options.maxElements - data.elements.length), maxTexts: Math.max(0, options.maxTexts - data.texts.length) };
       // Use Playwright's native CSS resolver, including open shadow roots.
       const roots = options.selection?.roots ?? (options.scope ? (await frame.locator(`css=${options.scope}`).elementHandles()) as ElementHandle<Element>[] : undefined);
@@ -76,7 +78,8 @@ export async function capture(page: Page, options: { semanticRefs?: boolean; sco
       data.truncatedTexts ||= observed.truncatedTexts;
     }
     data.truncated = data.truncatedElements || data.truncatedTexts;
-    if (page.url() !== rawURL) throw new BrowserError('STALE_SNAPSHOT', 'Page navigated while it was being observed. Observe again.');
+    options.signal?.throwIfAborted();
+    if (page.url() !== rawURL) throw new BrowserError('STALE_SNAPSHOT', 'Page navigated while it was being observed. Observe again.', { retryable: true });
     return { data, refs, textRefs, rawURL, changeKeys, dispose };
   } catch (error) { await dispose(); throw error; }
 }
@@ -87,13 +90,14 @@ export async function waitForFrameProgress(frame: Frame, baseline: string, timeo
   await handle.dispose();
 }
 
-export async function verifyTarget(ref: ElementRef): Promise<void> {
+export async function verifyTarget(ref: ElementRef, signal?: AbortSignal): Promise<void> {
   let current: ReturnType<typeof DOM.describe>;
   try {
     const describe = new Function('element', `${source()}; return JevDOM.describe(element);`) as (element: Element) => ReturnType<typeof DOM.describe>;
     current = await ref.handle.evaluate(describe);
-  } catch {
-    throw new BrowserError('STALE_TARGET', 'The observed element is no longer available. Observe again.');
+  } catch (error) {
+    signal?.throwIfAborted();
+    throw new BrowserError('STALE_TARGET', 'The observed element is no longer available. Observe again.', { cause: error });
   }
   if (!current.connected || !current.visible || current.signature !== ref.signature)
     throw new BrowserError('STALE_TARGET', 'The observed target or its row identity changed. Observe again.');
@@ -198,7 +202,7 @@ export async function readLocatorEvidence(page:Page,locator:Locator,property:Sem
     const read=new Function('element','args',`${source()}; return JevDOM.readLocatorValue(element,args);`) as (element:Element,args:{property:string;attribute?:string;roots?:Element[]})=>ReturnType<typeof DOM.readLocatorValue>;
     const value=await handle.evaluate(read,{property,attribute,...(options.scope?{roots}:{})});
     options.signal.throwIfAborted();
-    if(value.error)throw new BrowserError(value.error,value.error==='INVALID_ARGUMENT'?'The Locator does not support the requested property.':'No visible semantic evidence is available within the caller scope.');
+    if(value.error)throw new BrowserError(value.error as BrowserErrorCode,value.error==='INVALID_ARGUMENT'?'The Locator does not support the requested property.':'No visible semantic evidence is available within the caller scope.');
     const {error:_error,...evidence}=value;
     if(page.url()!==rawURL||frame.url()!==frameURL)throw new BrowserError('STALE_TARGET','The semantic Locator document changed during observation.');
     return {evidence:{sourceId,frame:page.frames().indexOf(frame),...evidence} as SemanticEvidence,frame,frameURL,rawURL};

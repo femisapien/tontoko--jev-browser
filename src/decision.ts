@@ -64,10 +64,10 @@ export class JevDecisionEngine implements DecisionEngine {
     try {
       raw = await this.client.systemOne(request, { signal: options.signal, retry: { maxRetries: options.maxRetries ?? 0 } });
     } catch (error) {
-      if (options.signal?.aborted) throw new BrowserError('CANCELLED', 'Jev decision cancelled.');
-      const status = typeof error === 'object' && error !== null && 'status' in error && typeof error.status === 'number'
-        ? ` (HTTP ${error.status})` : '';
-      throw new BrowserError('PROVIDER_ERROR', `Jev request failed${status}; no browser action was retried.`);
+      if (options.signal?.aborted) throw new BrowserError('CANCELLED', 'Jev decision cancelled.', { cause: error });
+      const status = typeof error === 'object' && error !== null && 'status' in error && typeof error.status === 'number' ? error.status : undefined;
+      // Transport failures, 408, 429 and 5xx may succeed unchanged; the core clears this once a browser effect started.
+      throw new BrowserError('PROVIDER_ERROR', `Jev request failed${status === undefined ? '' : ` (HTTP ${status})`}; no browser action was retried.`, { cause: error, retryable: status === undefined || status === 408 || status === 429 || status >= 500 });
     }
     const parsed = wireResult.safeParse(raw);
     if (!parsed.success) throw new BrowserError('INVALID_DECISION', 'Jev returned an invalid decision envelope.');
