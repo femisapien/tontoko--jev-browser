@@ -44,9 +44,9 @@ A resumable result carries only an opaque ID, its stop reason, and (when relevan
 
 New values may be added. Existing values, including empty objects and nested object structure, cannot be replaced; conflicts raise `CONTINUATION_CONFLICT` before browser work. Input objects are copied before awaiting the provider. `resume` may supply a new signal and timeout. The original step/decision limits apply to each invocation, and usage is per invocation rather than a cumulative total.
 
-Inputs applied in an unfinished wizard step can be carried through a pause without claiming they were saved. The paused URL and observable page structure must still match before those inputs are reused; a changed wizard view raises `CONTINUATION_CONTEXT_CHANGED`. Final result verification is still required.
+Inputs applied in an unfinished wizard step can be carried through a pause without claiming they were saved. This does not require an earlier checkpoint: a wizard that stops after its Next step but before its first save still returns a continuation. The paused URL and observable page structure must still match before those inputs are reused; a changed wizard view raises `CONTINUATION_CONTEXT_CHANGED`. Final result verification is still required.
 
-Verified work also remains resumable after a step-budget or other recoverable stop. A failure with uncertain non-commit effects is not automatically made resumable by pretending that those effects did not happen.
+Verified work and carried wizard input also remain resumable after a step-budget or other recoverable stop. A failure with uncertain non-commit effects is not automatically made resumable by pretending that those effects did not happen.
 
 ## Unknown save outcomes
 

@@ -179,3 +179,66 @@ for(const changed of [false,true])test(`continuation review: paused wizard ${cha
   assert.deepEqual(app.submissions.map(x=>x.stage),['account','membership']);
   assert.equal(app.submissions[1].data.b3,values.membershipCode);
 });
+
+// One native form whose single save follows a Next step, so no checkpoint precedes the pause.
+async function unsavedWizard(t){
+  const submissions=[];
+  const service=await httpServer(async(req,res)=>{
+    if(req.url==='/save'){
+      let raw='';for await(const chunk of req)raw+=chunk;const data=JSON.parse(raw);submissions.push(data);
+      res.setHeader('Content-Type','application/json');res.end(JSON.stringify(data));return;
+    }
+    res.setHeader('Content-Type','text/html; charset=utf-8');res.end(`<!doctype html><main><h1>Membership setup</h1><form aria-label="membership details"><fieldset id="first"><label>Email address<input name="a7" type="email" required></label><button type="button">Next</button></fieldset><fieldset id="second" hidden><label>Membership code<input name="b3" required></label><button>Save membership</button></fieldset></form><section id="results"></section></main><script>
+      const form=document.querySelector('form');
+      form.querySelector('button[type=button]').onclick=()=>{document.querySelector('#first').hidden=true;document.querySelector('#second').hidden=false;};
+      form.onsubmit=async event=>{event.preventDefault();
+        const data=await (await fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({a7:form.a7.value,b3:form.b3.value})})).json();
+        const article=document.createElement('article'),h=document.createElement('h2');h.textContent='Membership created';article.append(h);
+        for(const [label,value] of [['Email address',data.a7],['Membership code',data.b3]]){const dl=document.createElement('dl'),dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;dl.append(dt,dd);article.append(dl);}
+        document.querySelector('#results').append(article);
+      };
+    </script>`);
+  });
+  const decider=stagedDecider(2),original=decider.decide.bind(decider);
+  decider.decide=async(request,options)=>{
+    const result=await original(request,options);
+    const next=Object.entries(request.questions.action?.criteria??{}).find(([,c])=>c?.kind==='click'&&c.target?.name==='Next');
+    if(next)result.answers.action={choice:next[0],confidence:0.95};
+    return result;
+  };
+  const page=await browser.newPage();await page.goto(service.url);const core=new JevBrowser({page,engine:decider});
+  t.after(async()=>{await core.close();await page.close();await service.close();});
+  return {core,page,submissions};
+}
+const wizardGoal='Enter the email address, continue, then save the membership with the membership code once.';
+
+test('continuation review: a wizard missing input before its first checkpoint resumes with carried input',async t=>{
+  const app=await unsavedWizard(t);
+  const first=await app.core.run(wizardGoal,{values:{email:values.email}});
+  assert.equal(first.reason,'missing-input',JSON.stringify(first));assert.equal(first.checkpoints,undefined);
+  assert.ok(first.continuation?.id);assert.equal(first.continuation.pendingEffect,undefined);assert.equal(app.submissions.length,0);
+  const second=await app.core.resume(first.continuation.id,{values:{membershipCode:values.membershipCode}});
+  assert.equal(second.status,'complete',JSON.stringify(second));assert.equal(second.checkpoints.length,1);
+  assert.deepEqual(app.submissions,[{a7:values.email,b3:values.membershipCode}]);
+  await assert.rejects(app.core.resume(first.continuation.id),{code:'CONTINUATION_NOT_FOUND'});
+});
+
+test('continuation review: a step budget before the first checkpoint keeps carried input resumable',async t=>{
+  const app=await unsavedWizard(t);
+  const first=await app.core.run(wizardGoal,{values:{email:values.email,membershipCode:values.membershipCode},maxSteps:2});
+  assert.equal(first.reason,'step-limit',JSON.stringify(first));assert.deepEqual(first.steps.map(step=>step.plan.action.kind),['fill','click']);
+  assert.ok(first.continuation?.id);assert.equal(app.submissions.length,0);
+  const second=await app.core.resume(first.continuation.id);
+  assert.equal(second.status,'complete',JSON.stringify(second));
+  assert.deepEqual(app.submissions,[{a7:values.email,b3:values.membershipCode}]);
+});
+
+for(const change of ['heading','url'])test(`continuation review: carried input before the first checkpoint rejects a changed ${change}`,async t=>{
+  const app=await unsavedWizard(t);
+  const first=await app.core.run(wizardGoal,{values:{email:values.email}});
+  assert.ok(first.continuation?.id,JSON.stringify(first));
+  if(change==='heading')await app.page.locator('h1').evaluate(element=>element.textContent='Different wizard');
+  else await app.page.evaluate(()=>history.pushState(null,'','?step=other'));
+  await assert.rejects(app.core.resume(first.continuation.id,{values:{membershipCode:values.membershipCode}}),{code:'CONTINUATION_CONTEXT_CHANGED'});
+  assert.equal(app.submissions.length,0);
+});

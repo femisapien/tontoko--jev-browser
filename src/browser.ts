@@ -45,6 +45,8 @@ function mergeRunValues(base: Record<string, RunValue> = {}, extra: Record<strin
   return merged;
 }
 const pageOrigin = (page: Page): string => new URL(page.url()).origin;
+// An input or advance with an unknown outcome is never hidden by making its stop resumable.
+const unknownNonCommit = (result: RunResult): boolean => !!result.effects?.some(effect=>effect.kind!=='commit'&&effect.status==='unknown');
 
 /** One Page and one decision/execution loop, shared by SDK, CLI and MCP. */
 export class JevBrowser {
@@ -419,7 +421,7 @@ export class JevBrowser {
     // Uncommitted wizard values are reusable only while the paused browser view
     // remains unchanged. They are never promoted to saved checkpoint evidence.
     let carried:CarriedState|undefined;
-    if(carriedInputs.length&&!pendingUnknown&&result.status!=='complete'){
+    if(carriedInputs.length&&!pendingUnknown&&result.status!=='complete'&&!unknownNonCommit(result)){
       const observed=await capture(this.page,{...this.limits,scope:options.scope});
       try{carried={inputPaths:carriedInputs,context:JSON.stringify([observed.rawURL,observed.changeKeys])};}
       finally{await observed.dispose();}
@@ -431,7 +433,8 @@ export class JevBrowser {
     const finish=(value:RunResult):RunResult=>{if(error){error.partial=value;throw error;}return value;};
     if(result.status==='complete'){if(existingId)this.continuations.delete(existingId);return finish(result);}
     const checkpoints=result.checkpoints??[];
-    const resumableMissing=checkpoints.length>0&&!result.effects?.some(effect=>effect.kind!=='commit'&&effect.status==='unknown');
+    // Carried wizard input needs no checkpoint: resume first re-checks its paused view.
+    const resumableMissing=(checkpoints.length>0||!!carried)&&!unknownNonCommit(result);
     const resumableUnknown=!!pendingUnknown;
     if(!resumableMissing&&!resumableUnknown){if(existingId)this.continuations.delete(existingId);return finish(result);}
     const id=existingId??randomUUID();
