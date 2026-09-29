@@ -7,6 +7,7 @@ import { BrowserError, publicError } from './errors.js';
 import { startMcpStdio } from './stdio.js';
 import { openSession, sendSession, listSessions, hasSession } from './sessions.js';
 import { parseCLI, commandFromCLI, positive, readJSON } from './cli-options.js';
+import { installBrowser } from './install.js';
 import { version } from './version.js';
 const help = `jev-browser — grounded Jev decisions and native Playwright, one SDK / CLI / MCP core
 
@@ -22,6 +23,7 @@ const help = `jev-browser — grounded Jev decisions and native Playwright, one 
   jev-browser sessions                  List sessions for this working directory
   jev-browser session                   JSONL stdin commands, one browser
   jev-browser mcp                       Official MCP stdio server
+  jev-browser install [BROWSER]         Install the browser build this package's Playwright needs
 
 All native commands accept --args JSON. 'call COMMAND --args JSON' is equivalent.
 Aliases: open, fill, press, select, uncheck, back, forward, upload, screenshot-file.
@@ -59,6 +61,7 @@ async function main(): Promise<void> {
   if (values.version) { process.stdout.write(`${version}\n`); return; }
   if (values.help || !positionals.length) { process.stdout.write(help); return; }
   let [name, ...words] = positionals;
+  if (name === 'install') { process.exitCode = await installBrowser(words[0] ?? options.browser!, values['dry-run']); return; }
   if (name === 'mcp') { startMcpStdio(options, values.url); return; }
   if (name === 'sessions') { await write({ ok: true, result: await listSessions() }); return; }
   if (name === 'open') {

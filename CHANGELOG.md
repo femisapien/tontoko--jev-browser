@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Added `jev-browser install [chromium|firefox|webkit] [--dry-run]`, which installs the browser build for the Playwright version this package bundles. A consumer that pins a different Playwright no longer needs to resolve this package's Playwright CLI by hand.
+
+## 0.10.0
+
+- Breaking: removed the `@tontoko/jev-browser/pi` export and adapter. Use the shared SDK, CLI or MCP surfaces, including the opt-in `screenOnly` mode. See `docs/migration.md`.
+- Builds clear generated output first, so stale files cannot enter a package. Tagged releases are published from CI after all platform jobs pass.
+
 ## 0.9.0
 
 - Added a shared `screen` command for actual viewport PNGs and native coordinate, focused keyboard, scroll and history input. Each action returns the resulting images and an observation ID; input consumes the latest observation, and navigation or viewport changes require another look.

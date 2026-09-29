@@ -4,7 +4,7 @@ import { BrowserError } from './errors.js';
 import { parseCommand } from './commands.js';
 import type { BrowserLaunchOptions } from './types.js';
 const definitions = {
-  help: { type: 'boolean', short: 'h' }, version: { type: 'boolean' }, headed: { type: 'boolean' },
+  help: { type: 'boolean', short: 'h' }, 'dry-run': { type: 'boolean' }, version: { type: 'boolean' }, headed: { type: 'boolean' },
   'allow-evaluate': { type: 'boolean' }, 'screen-only': { type: 'boolean' }, session: { type: 'string', short: 's' },
   url: { type: 'string' }, scope: { type: 'string' }, frame: { type: 'string' }, args: { type: 'string' },
   values: { type: 'string' }, fields: { type: 'string' }, schema: { type: 'string' }, 'records-scope': { type: 'string' },
