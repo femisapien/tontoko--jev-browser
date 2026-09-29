@@ -157,6 +157,8 @@ Tool calls to one server run one at a time in arrival order, so parallel calls w
 
 `browser_snapshot` provides refs for `browser_click`, `browser_type`, and other native tools. `browser_act`, `browser_observe`, `browser_extract`, and `browser_run` use the **same core** as the SDK. Native `browser_assert` verifies facts without asking a model. Tools also cover tabs, frames, dialogs, uploads/downloads, screenshots, PDF, mouse/keyboard, storage, cookies, routing, traces, console messages, and request metadata. Console messages, request metadata and downloads are reported for the selected tab unless `allTabs` is set; each entry carries a `pageId` that matches `browser_tabs`, and a download keeps a stable `id` for saving or cancelling it.
 
+Tool input schemas describe each argument. Rules that JSON Schema cannot express without top-level `oneOf`/`anyOf`, such as exactly one of `instruction` or `planId` for `browser_act`, are stated in the argument descriptions and still enforced by the shared command schemas. Integer arguments accept at most 2147483647.
+
 ## SDK: existing Playwright Page and assertions
 
 ```ts

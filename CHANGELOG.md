@@ -31,6 +31,7 @@
 - The MCP server runs tool calls one at a time in arrival order, so parallel calls wait instead of returning `BUSY`. Cancellation and an explicit `timeoutMs` include the wait; `browser_close` is not queued.
 - A failed lazy MCP launch is no longer cached, and a crashed or disconnected browser is replaced on the next tool call instead of failing every later call. Screen-only sessions still end after a failed startup or a lost browser.
 - Documented that `browser_snapshot` and other read-only tools replace short-lived refs and any pending observe plan, although they do not change the page.
+- MCP tool input schemas now describe their arguments, including rules JSON Schema cannot express without top-level combinators, such as exactly one of `instruction` or `planId` for `browser_act` and exactly one of `fields` or `schema` for `browser_extract`. `browser_screen` is unchanged. Descriptions add about 13 KB to `tools/list`.
 - CLI and MCP integer command arguments, such as `timeoutMs`, `maxSteps`, `frame` and tab or download indexes, now accept at most 2147483647 instead of advertising `Number.MAX_SAFE_INTEGER`. Larger timeouts previously passed validation but overflowed Node timers and cancelled the operation after about 1 ms.
 
 ## 0.11.0
