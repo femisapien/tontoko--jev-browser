@@ -28,6 +28,7 @@
 - A native file chooser is reported once with `SCREEN_FILE_CHOOSER_UNSUPPORTED`, and later screen calls continue on the same page instead of failing permanently.
 - The screen journal starts with a `header` row recording the jev-browser, Playwright and browser versions, the viewport and redacted launch options. Each journaled frame adds `sha256`, `width` and `height`. Existing fields are unchanged.
 - Added `--viewport WxH`, `--reduced-motion`, `--color-scheme` and `--locale` to the CLI and MCP server, plus `--options-file FILE` for JSON launch and context options (`launchOptions`, `contextOptions`, `storageState`, profile and endpoint fields). Explicit flags win over the file, and invalid fields are reported by name.
+- The MCP server runs tool calls one at a time in arrival order, so parallel calls wait instead of returning `BUSY`. Cancellation and an explicit `timeoutMs` include the wait; `browser_close` is not queued.
 
 ## 0.11.0
 

@@ -7,12 +7,29 @@ import { publicError } from './errors.js';
 import type { ScreenResult } from './screen.js';
 import { screenToolSchema } from './screen-tool.js';
 
-/** The caller owns the borrowed core, or its lazy factory's lifetime. */
+/** The caller owns the borrowed core, or its lazy factory's lifetime. Tool calls run one at a time, in arrival order. */
 export function createMcpServer(browser: JevBrowser | (() => Promise<JevBrowser>), options: { screenOnly?: boolean } = {}): McpServer {
   const server = new McpServer({ name: 'jev-browser', version });
   const screenOnly = typeof browser === 'function' ? options.screenOnly === true : browser.screenOnly;
   let started = typeof browser !== 'function';
   const names: CommandName[] = screenOnly ? ['screen', 'close'] : Object.keys(commandSchemas) as CommandName[];
+  // The core is exclusive and answers BUSY; clients commonly send parallel calls, so they wait here instead.
+  let queue = Promise.resolve();
+  const serial = async <T>(signal: AbortSignal, task: () => Promise<T>): Promise<T> => {
+    const previous = queue;
+    let release!: () => void;
+    const done = new Promise<void>(resolve => { release = resolve; });
+    queue = previous.then(() => done);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => reject(signal.reason);
+        if (signal.aborted) { abort(); return; }
+        signal.addEventListener('abort', abort, { once: true });
+        void previous.then(() => { signal.removeEventListener('abort', abort); resolve(); });
+      });
+      return await task();
+    } finally { release(); }
+  };
   for (const name of names) {
     const inputSchema: z.ZodType = name === 'screen' ? screenToolSchema : commandSchemas[name];
     const readOnly = commandReadOnly(name);
@@ -24,8 +41,12 @@ export function createMcpServer(browser: JevBrowser | (() => Promise<JevBrowser>
         context.mcpReq.signal.throwIfAborted();
         // A started core validates screen requests with the same schema and can report its current observationId.
         const command = name === 'screen' && started ? { ...(args as object), command: name } as Command : parseCommand({ ...(args as object), command: name });
-        const core = typeof browser === 'function' ? await browser() : browser; started = true;
-        const result = await executeCommand(core, command, context.mcpReq.signal);
+        // An explicit budget also covers waiting for earlier calls. Unparsed screen arguments are validated by the core.
+        const timeoutMs = 'timeoutMs' in command ? command.timeoutMs : undefined;
+        const signal = typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs >= 0 ? AbortSignal.any([context.mcpReq.signal, AbortSignal.timeout(timeoutMs)]) : context.mcpReq.signal;
+        const execute = async () => { const core = typeof browser === 'function' ? await browser() : browser; started = true; return executeCommand(core, command, signal); };
+        // Close is not queued: like SDK close(), it can stop a long-running call.
+        const result = name === 'close' ? await execute() : await serial(signal, execute);
         if (name === 'screen') {
           const screen = result as ScreenResult;
           const metadata = { ...screen, frames: screen.frames.map(({ data, path, ...frame }) => frame) };

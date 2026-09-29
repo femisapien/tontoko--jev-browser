@@ -20,7 +20,7 @@ npx jev-browser close --session work
 
 `open`で作成した名前付きセッションは、別々のCLI呼び出しでもブラウザー状態を維持します。全コマンドは`--args JSON`で呼び出せます。MCPでは同じ操作を`browser_click`、`browser_type`、`browser_assert`などのツールとして公開します。
 
-CLIとMCPサーバーでは、`--viewport 390x844`、`--reduced-motion`、`--color-scheme dark`、`--locale ja-JP`でPlaywrightのcontext設定を指定できます。device設定などは`--options-file FILE`のJSON（`launchOptions`、`contextOptions`など`JevBrowser.launch()`の起動設定）で渡し、明示したフラグが優先されます。
+CLIとMCPサーバーでは、`--viewport 390x844`、`--reduced-motion`、`--color-scheme dark`、`--locale ja-JP`でPlaywrightのcontext設定を指定できます。device設定などは`--options-file FILE`のJSON（`launchOptions`、`contextOptions`など`JevBrowser.launch()`の起動設定）で渡し、明示したフラグが優先されます。MCPの並列ツール呼び出しは`BUSY`にせず、到着順に1つずつ実行します。
 
 ## 既存のPlaywright Locatorをそのまま使う
 

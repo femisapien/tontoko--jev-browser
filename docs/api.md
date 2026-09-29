@@ -2,7 +2,7 @@
 
 ## SDK construction and lifecycle
 
-`new JevBrowser({ page, ...options })` borrows a Playwright Page. `await JevBrowser.launch(options)` launches or attaches. `close()` disposes only resources owned by the instance; async disposal is supported. It gives an in-flight operation about one second to unwind, then closes owned resources anyway; borrowed ones are never closed. Do not operate a Page concurrently from another core or external writer. Concurrent operations on one core return `BUSY`.
+`new JevBrowser({ page, ...options })` borrows a Playwright Page. `await JevBrowser.launch(options)` launches or attaches. `close()` disposes only resources owned by the instance; async disposal is supported. It gives an in-flight operation about one second to unwind, then closes owned resources anyway; borrowed ones are never closed. Do not operate a Page concurrently from another core or external writer. Concurrent operations on one core return `BUSY`; the MCP server queues its own tool calls instead.
 
 Options include:
 

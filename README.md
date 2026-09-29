@@ -153,6 +153,8 @@ After installing the tarball, configure your MCP client:
 
 The environment entry is unnecessary for native operations. Prefer your client's secret store over putting real keys into committed JSON. Browser launch is lazy: tool discovery does not start a browser. The server accepts the CLI launch flags, for example `"args": [".../mcp-stdio.js", "--viewport", "390x844", "--options-file", "/absolute/path/device.json"]`.
 
+Tool calls to one server run one at a time in arrival order, so parallel calls wait instead of returning `BUSY`. A waiting call ends when the client cancels it, and an explicit `timeoutMs` argument includes the wait. `browser_close` is not queued, so it can stop a long-running call.
+
 `browser_snapshot` provides refs for `browser_click`, `browser_type`, and other native tools. `browser_act`, `browser_observe`, `browser_extract`, and `browser_run` use the **same core** as the SDK. Native `browser_assert` verifies facts without asking a model. Tools also cover tabs, frames, dialogs, uploads/downloads, screenshots, PDF, mouse/keyboard, storage, cookies, routing, traces, console messages, and request metadata. Console messages, request metadata and downloads are reported for the selected tab unless `allTabs` is set; each entry carries a `pageId` that matches `browser_tabs`, and a download keeps a stable `id` for saving or cancelling it.
 
 ## SDK: existing Playwright Page and assertions
