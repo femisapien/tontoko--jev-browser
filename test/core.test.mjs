@@ -1,8 +1,9 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { inspect } from 'node:util';
 import { z } from 'zod';
 import * as sdk from '../dist/index.js';
-import { fixtureBrowser, engine, select } from './helpers.mjs';
+import { fixtureBrowser, engine, select, apiResult } from './helpers.mjs';
 let browser;
 before(async()=>{browser=await fixtureBrowser();});
 after(async()=>{await browser?.close();});
@@ -30,6 +31,19 @@ test('named input bindings are executed locally, never sent to Jev',async t=>{
   const result=await core.act('パスワードを入力',{values:{password:'TEST-SECRET-123'}});
   assert.equal(await page.locator('input').inputValue(),'TEST-SECRET-123');
   assert.ok(!JSON.stringify(decider.requests).includes('TEST-SECRET-123'));assert.ok(!JSON.stringify(result).includes('TEST-SECRET-123'));
+});
+test('an explicit apiKey authenticates decisions but is not revealed by inspecting the core',async t=>{
+  const context=await browser.newContext();const page=await context.newPage();await page.setContent('<button onclick="this.dataset.hit=1">保存</button>');
+  let authorization;
+  const core=new sdk.JevBrowser({page,apiKey:'TEST-ONLY-SECRET-KEY',fetch:async(url,init)=>{
+    authorization=new Headers(init.headers).get('authorization');
+    return Response.json(apiResult(JSON.parse(init.body),q=>Object.keys(q.criteria).find(id=>q.criteria[id]?.kind==='click')??'__none__'));
+  }});
+  t.after(async()=>{await core.close();await context.close();});
+  assert.ok(!inspect(core,{depth:4}).includes('TEST-ONLY-SECRET-KEY'));
+  const result=await core.act('保存をクリック');
+  assert.equal(result.status,'executed');assert.equal(authorization,'Bearer TEST-ONLY-SECRET-KEY');
+  assert.ok(!inspect(core,{depth:4}).includes('TEST-ONLY-SECRET-KEY'));assert.ok(!JSON.stringify(result).includes('TEST-ONLY-SECRET-KEY'));
 });
 test('observing does not mutate; the returned plan can be executed once',async t=>{
   const {core,page}=await fixture(t,'<button onclick="this.dataset.hit=Number(this.dataset.hit||0)+1">保存</button>',select(c=>c.kind==='click'));
