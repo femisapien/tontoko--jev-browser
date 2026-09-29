@@ -110,12 +110,15 @@ test('look waits for a pending main-frame navigation and observes the new docume
  assert.equal(await page.locator('button').textContent(),'Clicked');
 });
 test('navigations that keep interrupting the retake return STALE_SCREEN, not a capture failure',async t=>{
- const {core,page}=await fixture(t);
- await page.setContent('<button style="position:absolute;left:20px;top:20px;width:150px;height:40px" onclick="this.textContent=\'Clicked\';let i=0;setInterval(()=>history.replaceState(null,\'\',\'#s\'+i++),5)">Start</button>');
- const seen=await core.screen({action:'look'});
+ const {core,page}=await fixture(t);let interrupts=0;const screenshot=page.screenshot.bind(page);
+ // Each hooked screenshot starts after a real main-frame same-document navigation; engines throttle unbounded History API streams.
+ page.screenshot=async(...args)=>{if(interrupts>0){interrupts--;await Promise.all([page.waitForEvent('framenavigated'),page.evaluate(()=>{location.hash='n'+Math.random();})]);}return screenshot(...args);};
+ await page.setContent(button('Start'));
+ let seen=await core.screen({action:'look'});interrupts=2;
  await assert.rejects(core.screen({action:'click',x:60,y:40,observationId:seen.observationId}),error=>{assert.equal(error.code,'STALE_SCREEN');return true;});
- assert.equal(await page.locator('button').textContent(),'Clicked');
- for(let i=0;i<5;i++)await assert.rejects(core.screen({action:'look'}),error=>{assert.equal(error.code,'STALE_SCREEN');return true;});
+ assert.equal(await page.locator('button').textContent(),'Clicked');assert.equal(interrupts,0);
+ interrupts=2;await assert.rejects(core.screen({action:'look'}),error=>{assert.equal(error.code,'STALE_SCREEN');return true;});
+ seen=await core.screen({action:'look'});assert.equal(seen.navigated,false);assert.equal(seen.frames.length,1);
 });
 test('an input navigation that ends without a document does not hold the capture',async t=>{
  const {core,page}=await fixture(t);
