@@ -25,6 +25,8 @@ async function fixture(t,html,options={}){
  if(html!==undefined)await page.setContent(html);return {core,page,context};
 }
 const opened=async(page,selector)=>{const chooser=page.waitForEvent('filechooser');await page.click(selector);await chooser;};
+// Browsers may log their own warnings, such as Firefox's quirks-mode notice.
+const logged=(messages,prefix)=>messages.filter(m=>m.text.startsWith(prefix));
 const downloaded=async(page,name)=>{const event=page.waitForEvent('download');await page.evaluate(name=>{const a=document.createElement('a');a.href='/dl/'+name;document.body.append(a);a.click();a.remove();},name);await event;};
 
 test('a borrowed Page keeps Playwright dialog dismissal outside Jev operations',async t=>{
@@ -50,16 +52,15 @@ test('launched cores and captureDialogs hold caller-opened dialogs for handle_di
 test('console and network entries are scoped to the selected tab unless allTabs is requested',async t=>{
  const {core,page}=await fixture(t);await core.goto(server.url+'/a');await page.evaluate(()=>console.log('from tab A'));
  await core.native({command:'tabs',action:'new',url:server.url+'/b'});await core.page.evaluate(()=>console.log('from tab B'));
- assert.deepEqual((await core.native({command:'console_messages'})).messages.map(m=>m.text),['from tab B']);
- const [a,b]=(await core.native({command:'tabs',action:'list'})).tabs.map(tab=>tab.pageId);assert.notEqual(a,b);
- assert.deepEqual((await core.native({command:'console_messages'})).messages.map(m=>m.pageId),[b]);
- assert.deepEqual((await core.native({command:'console_messages',allTabs:true})).messages.map(m=>[m.text,m.pageId]),[['from tab A',a],['from tab B',b]]);
+ const selected=(await core.native({command:'console_messages'})).messages;assert.deepEqual(logged(selected,'from tab').map(m=>m.text),['from tab B']);
+ const [a,b]=(await core.native({command:'tabs',action:'list'})).tabs.map(tab=>tab.pageId);assert.notEqual(a,b);assert.ok(selected.every(m=>m.pageId===b));
+ assert.deepEqual(logged((await core.native({command:'console_messages',allTabs:true})).messages,'from tab').map(m=>[m.text,m.pageId]),[['from tab A',a],['from tab B',b]]);
  const requests=(await core.native({command:'network_requests'})).requests;
  assert.ok(requests.some(r=>r.url.endsWith('/b')));assert.ok(requests.every(r=>r.pageId===b));
  assert.ok((await core.native({command:'network_requests',allTabs:true})).requests.some(r=>r.pageId===a&&r.url.endsWith('/a')));
  // Clearing the selected tab keeps another tab's history.
  await core.native({command:'console_messages',clear:true});
- assert.deepEqual((await core.native({command:'console_messages',allTabs:true})).messages.map(m=>m.text),['from tab A']);
+ assert.deepEqual(logged((await core.native({command:'console_messages',allTabs:true})).messages,'from tab').map(m=>m.text),['from tab A']);
 });
 test('file_upload without a target uses only a chooser from the selected tab and document',async t=>{
  const {core,page}=await fixture(t);const path=join(root,'chooser.txt');await writeFile(path,'chosen');
@@ -96,5 +97,5 @@ test('tab-scoped event fields are validated and exposed through MCP',async t=>{
  t.after(async()=>{await client.close();await mcp.close();});
  await mcp.connect(st);await client.connect(ct);
  const result=await client.callTool({name:'browser_console_messages',arguments:{allTabs:true}});assert.notEqual(result.isError,true);
- assert.deepEqual(result.structuredContent.messages.map(m=>[m.text,typeof m.pageId]),[['over MCP','number']]);
+ assert.deepEqual(logged(result.structuredContent.messages,'over MCP').map(m=>[m.text,typeof m.pageId]),[['over MCP','number']]);
 });
