@@ -215,7 +215,7 @@ const result = await browser.extract(
 // result.data.invoices, result.evidence['invoices.0.total']
 ```
 
-Nested objects and arrays are supported. Every array item comes from an observed row/card, and its fields are selected only from that record's text. `recordsScope` selects the records; otherwise semantic rows, list items and articles are used. Values and hrefs retain source evidence. Missing required values fail instead of being invented. Unsafe integers should be extracted as strings. Schema defaults, catch fallbacks, generated summaries, and value-changing transforms are not extraction operations.
+Nested objects and arrays are supported. Every array item comes from an observed row/card, and its fields are selected only from that record's text. `recordsScope` selects the records; otherwise semantic rows, list items and articles are used. Values and hrefs retain source evidence. Text longer than 700 characters is observed as its first 700 characters with `truncated: true` and is never copied. Missing required values fail instead of being invented. Unsafe integers should be extracted as strings. Schema defaults, catch fallbacks, generated summaries, and value-changing transforms are not extraction operations.
 
 ### Bounded agent, deterministic completion
 
