@@ -20,7 +20,7 @@ export interface Captured {
   changeKeys: Record<number, string>;
   dispose(): Promise<void>;
 }
-interface CaptureOptions { signal?: AbortSignal; semanticRefs?: boolean; scope?: string; requireScope?: boolean; recordsScope?: string; maxElements: number; maxTexts: number; selection?: {frame:Frame;roots:ElementHandle<Element>[]} }
+interface CaptureOptions { signal?: AbortSignal; deadline?: number; semanticRefs?: boolean; scope?: string; requireScope?: boolean; recordsScope?: string; maxElements: number; maxTexts: number; selection?: {frame:Frame;roots:ElementHandle<Element>[]} }
 // Playwright reports these when a frame is removed, or its document replaced, during an evaluation.
 const detachedFrame = /Frame (?:was|has been) detached/;
 const replacedDocument = (error: unknown) => error instanceof BrowserError ? error.code === 'STALE_SNAPSHOT' : error instanceof Error && /Execution context was destroyed/.test(error.message);
@@ -31,8 +31,12 @@ export async function capture(page: Page, options: CaptureOptions): Promise<Capt
     catch (error) {
       // Selected roots belong to the replaced document, so only a whole-page capture can be retaken.
       if (options.selection || !replacedDocument(error)) throw error;
-      if (attempt >= 3) throw new BrowserError('STALE_SNAPSHOT', 'Page kept navigating while it was being observed. Observe again.', { retryable: true });
-      await page.waitForLoadState('domcontentloaded', { timeout: 2_000 }).catch(() => undefined);
+      // Retries spend the caller's operation budget; they never extend it.
+      options.signal?.throwIfAborted();
+      const wait = Math.min(2_000, Math.floor((options.deadline ?? Infinity) - performance.now()));
+      if (attempt >= 3 || wait <= 0) throw new BrowserError('STALE_SNAPSHOT', 'Page kept navigating while it was being observed. Observe again.', { retryable: true });
+      await page.waitForLoadState('domcontentloaded', { timeout: wait, ...(options.signal ? { signal: options.signal } : {}) }).catch(() => undefined);
+      options.signal?.throwIfAborted();
     }
   }
 }
@@ -52,7 +56,7 @@ async function captureOnce(page: Page, options: CaptureOptions): Promise<Capture
   try {
     // Read a frame completely before recording it, so a frame removed mid-read leaves no partial evidence.
     const observeFrame = async (frameIndex: number, frame: Frame) => {
-      const {selection,signal:_signal,...ordinaryOptions}=options;
+      const {selection,signal:_signal,deadline:_deadline,...ordinaryOptions}=options;
       const frameOptions = { ...ordinaryOptions, maxElements: Math.max(0, options.maxElements - data.elements.length), maxTexts: Math.max(0, options.maxTexts - data.texts.length) };
       // Use Playwright's native CSS resolver, including open shadow roots.
       const roots = options.selection?.roots ?? (options.scope ? (await frame.locator(`css=${options.scope}`).elementHandles()) as ElementHandle<Element>[] : undefined);

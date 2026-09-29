@@ -60,6 +60,27 @@ test('a page that keeps navigating fails with STALE_SNAPSHOT after bounded retri
   await assert.rejects(core.snapshot(),{code:'STALE_SNAPSHOT'});
   assert.equal(changes,3);
 });
+async function hanging(t){
+  const server=await httpServer((req,res)=>{res.setHeader('Content-Type','text/html');
+    if(req.url==='/hang'){res.write('<h1>Partial page</h1>'+' '.repeat(4096));return;}
+    res.end('<h1>First page</h1><button>Start</button>');});
+  const page=await browser.newPage();await page.goto(server.url);
+  // The replacement document commits but never finishes loading, so a retry can only wait.
+  const core=new JevBrowser({page:between(page,async()=>{await page.evaluate(()=>{location.href='/hang';});await page.waitForURL('**/hang',{waitUntil:'commit'});}),engine:forbidden});
+  t.after(async()=>{await core.close();await page.close();await server.close();});
+  return core;
+}
+test('a capture retry waiting on a loading document stops at the operation deadline',async t=>{
+  const core=await hanging(t),started=performance.now();
+  await assert.rejects(core.snapshot({timeoutMs:500}),error=>error.code==='TIMEOUT'||error.code==='STALE_SNAPSHOT');
+  assert.ok(performance.now()-started<1_500,`snapshot took ${Math.round(performance.now()-started)}ms`);
+});
+test('a capture retry waiting on a loading document stops when the caller cancels',async t=>{
+  const core=await hanging(t),controller=new AbortController(),started=performance.now();
+  setTimeout(()=>controller.abort(new Error('caller cancelled')),300);
+  await assert.rejects(core.snapshot({signal:controller.signal}),/caller cancelled/);
+  assert.ok(performance.now()-started<1_500,`snapshot took ${Math.round(performance.now()-started)}ms`);
+});
 test('a child frame removed during capture is skipped instead of failing the capture',async t=>{
   const {core,page}=await interrupted(t,page=>page.evaluate(()=>document.querySelector('iframe').remove()));assert.equal(page.frames().length,2);
   const snapshot=await core.snapshot();
