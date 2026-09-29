@@ -43,6 +43,8 @@ Options:
   --browser chromium|firefox|webkit  --headed
   --cdp-endpoint URL  --ws-endpoint URL  --user-data-dir DIR
   --storage-state FILE  --output-dir DIR  --file-root DIR (repeatable)
+  --viewport WxH  --reduced-motion  --color-scheme light|dark|no-preference  --locale TAG
+  --options-file FILE        JSON launch/context options; explicit flags win
   --allow-evaluate           Enable trusted page JS; never Node code execution
   --screen-only              Immutable session mode: screen pixels/physical inputs and close only
   --model NAME  --idle-timeout-ms N  --help  --version
