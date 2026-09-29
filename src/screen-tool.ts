@@ -9,7 +9,7 @@ const shape: Record<string, z.ZodType> = {};
 // The flat projection cannot mark per-action requirements as required, so descriptions state them.
 const descriptions: Record<string, string> = {
   action: 'look observes without input; add capture to look for a short frame sequence (there is no separate capture action). click, move, drag, scroll, type and press send one physical input. back, forward and reload use browser history. wait pauses, then observes.',
-  observationId: 'The observationId from the latest screen result. Required for click, move, drag, scroll, type, press, back, forward and reload. Optional for wait. Omit for look.',
+  observationId: 'The observationId from the latest screen result. Required for click, move, drag, scroll, type and press. Optional for wait. Omit for look. back, forward and reload require it too, except while no current observation exists (recovery after failed captures).',
   capture: 'Optional for any action: frames 1-10 and intervalMs 20-1000 return that many chronological images after the action.',
   x: 'Viewport image pixel. Required for click, move and drag; for scroll, an optional wheel position paired with y.',
   y: 'Viewport image pixel. Required for click, move and drag; for scroll, an optional wheel position paired with x.',

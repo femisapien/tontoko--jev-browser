@@ -57,13 +57,73 @@ test('screen checks the existing command policy and rechecks freshness after aut
  const denied=await fixture(t,{allowCommand:command=>command.command!=='screen'});
  await assert.rejects(denied.core.screen({action:'look'}),{code:'ACTION_DENIED'});
 });
-test('navigation inside an observed iframe invalidates the whole viewport observation',async t=>{
+test('only a main-frame navigation invalidates the viewport observation',async t=>{
  const {core,page}=await fixture(t);
- await page.setContent('<iframe src="'+server.url+'"></iframe><button style="position:absolute;left:20px;top:20px;width:100px;height:40px" onclick="this.textContent=\'Unexpected\'">Unchanged</button>');
- const seen=await core.screen({action:'look'});
+ await page.setContent('<iframe src="'+server.url+'"></iframe><button style="position:absolute;left:20px;top:20px;width:100px;height:40px" onclick="this.textContent=\'Clicked\'">Unchanged</button>');
+ let seen=await core.screen({action:'look'});
+ // Subframe content changes like other page content; it does not replace the observed document.
  await page.frames().find(frame=>frame!==page.mainFrame()).goto(server.url+'/changed');
- await assert.rejects(core.screen({action:'click',x:50,y:35,observationId:seen.observationId}),{code:'STALE_SCREEN'});
- assert.equal(await page.locator('button').textContent(),'Unchanged');
+ seen=await core.screen({action:'click',x:50,y:35,observationId:seen.observationId});
+ assert.equal(await page.locator('button').textContent(),'Clicked');assert.equal(seen.navigated,false);
+ await page.evaluate(()=>{location.hash='same-document';});
+ await assert.rejects(core.screen({action:'move',x:5,y:5,observationId:seen.observationId}),{code:'STALE_SCREEN'});
+});
+async function site(t,handler){const s=await httpServer(handler);t.after(()=>s.close());return s;}
+const button=label=>'<button style="position:absolute;left:20px;top:20px;width:150px;height:40px" onclick="this.textContent=\'Clicked\'">'+label+'</button>';
+test('a navigation started by an input settles into a fresh image instead of a stale capture',async t=>{
+ const {core,page}=await fixture(t);
+ const s=await site(t,(req,res)=>{res.setHeader('content-type','text/html');
+  if(req.url==='/next'){setTimeout(()=>res.end(button('Next page')),50);return;}
+  res.end('<a href="/next" style="position:absolute;left:20px;top:20px;width:150px;height:40px;display:block">Go next</a>');});
+ await page.goto(s.url);
+ let seen=await core.screen({action:'look'});
+ seen=await core.screen({action:'click',x:60,y:40,observationId:seen.observationId});
+ assert.equal(seen.navigated,true);assert.equal(seen.action.outcome,'executed');assert.equal(new URL(page.url()).pathname,'/next');
+ await core.screen({action:'click',x:60,y:40,observationId:seen.observationId});
+ assert.equal(await page.locator('button').textContent(),'Clicked');
+});
+test('look waits for a pending main-frame navigation and observes the new document',async t=>{
+ const {core,page}=await fixture(t);let requested,respond;const navigation=new Promise(resolve=>{requested=resolve;});
+ const s=await site(t,(req,res)=>{res.setHeader('content-type','text/html');
+  if(req.url==='/next'){respond=()=>res.end(button('Next page'));requested();return;}
+  res.end('<p>Start</p>');});
+ await page.goto(s.url);await core.screen({action:'look'});
+ await page.evaluate(()=>{location.href='/next';});await navigation;
+ const pending=core.screen({action:'look'});respond();
+ const seen=await pending;assert.equal(seen.navigated,true);
+ await core.screen({action:'click',x:60,y:40,observationId:seen.observationId});
+ assert.equal(await page.locator('button').textContent(),'Clicked');
+});
+test('failed captures report a reason, and history actions recover without an observationId only then',async t=>{
+ const {core,page}=await fixture(t);let fontRequested;const font=new Promise(resolve=>{fontRequested=resolve;});
+ const s=await site(t,(req,res)=>{if(req.url==='/held.woff2'){fontRequested();return;}res.setHeader('content-type','text/html');res.end(button('Ready'));});
+ await page.goto(s.url);
+ let seen=await core.screen({action:'look'});
+ await assert.rejects(core.screen({action:'reload'}),error=>error.code==='INVALID_ARGUMENT'&&error.details.issues[0].path==='observationId'&&error.details.observationId===seen.observationId);
+ // Playwright screenshots wait for fonts, so a held font makes the capture fail for a known reason.
+ await page.evaluate(url=>{const face=new FontFace('held',`url("${url}/held.woff2")`);document.fonts.add(face);document.body.style.fontFamily='held';void face.load().catch(()=>{});},s.url);
+ await font;
+ await assert.rejects(core.screen({action:'look'},{timeoutMs:1000}),error=>{
+  assert.equal(error.code,'SCREEN_FAILED');assert.deepEqual(error.details,{reason:'timeout'});assert.match(error.message,/timeout/);return true;
+ });
+ await assert.rejects(core.screen({action:'reload',observationId:seen.observationId}),error=>error.code==='STALE_SCREEN'&&/omit observationId/.test(error.message));
+ seen=await core.screen({action:'reload'});
+ assert.equal(seen.action.outcome,'executed');assert.equal(seen.navigated,true);
+ await core.screen({action:'click',x:60,y:40,observationId:seen.observationId});
+ assert.equal(await page.locator('button').textContent(),'Clicked');
+ await page.close();
+ await assert.rejects(core.screen({action:'look'}),error=>error.code==='SCREEN_FAILED'&&error.details.reason==='page-closed');
+});
+test('a native dialog that interrupts a capture is reported as its reason',async t=>{
+ const {core,page}=await fixture(t);let fontRequested;const font=new Promise(resolve=>{fontRequested=resolve;});
+ const s=await site(t,(req,res)=>{if(req.url==='/held.woff2'){fontRequested();return;}res.setHeader('content-type','text/html');res.end('<p>Visible</p>');});
+ await page.goto(s.url);
+ await page.evaluate(url=>{const face=new FontFace('held',`url("${url}/held.woff2")`);document.fonts.add(face);document.body.style.fontFamily='held';void face.load().catch(()=>{});},s.url);
+ await font;
+ const pending=core.screen({action:'look'},{timeoutMs:1000}).catch(error=>error);
+ await page.evaluate(()=>{setTimeout(()=>alert('PRIVATE_DIALOG'));});
+ const error=await pending;
+ assert.equal(error.code,'SCREEN_FAILED');assert.deepEqual(error.details,{reason:'dialog'});assert.equal(error.message.includes('PRIVATE_'),false);
 });
 test('screen mode rejects ordinary dispatcher commands and does not change normal mode',async t=>{
  const {core}=await fixture(t,{screenOnly:true});

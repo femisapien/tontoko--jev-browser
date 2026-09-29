@@ -4,7 +4,7 @@ export type { DecisionEngine, DecisionRequest, DecisionResult, JevOptions } from
 export { BrowserError } from './errors.js';
 export type { BrowserErrorCode, BrowserErrorOptions } from './errors.js';
 export { screenSchema } from './screen.js';
-export type { ScreenRequest, ScreenResult, ScreenFrame } from './screen.js';
+export type { ScreenRequest, ScreenResult, ScreenFrame, ScreenFailureReason } from './screen.js';
 export type * from './types.js';
 
 export type { NativeCommand, NativeName } from './native-schemas.js';

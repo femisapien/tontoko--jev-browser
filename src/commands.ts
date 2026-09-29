@@ -38,7 +38,7 @@ export const commandSchemas = {
 export type CommandName = keyof typeof commandSchemas;
 export type Command = { [K in CommandName]: { command: K } & z.output<(typeof commandSchemas)[K]> }[CommandName];
 const descriptions: Partial<Record<CommandName, string>> = {
-  screen: 'Observe viewport pixels or send one physical input. Start with action look. click, move, drag, scroll, type, press, back, forward and reload require the latest observationId; field descriptions state each action\'s arguments. Rejected requests keep that observationId usable. Returns fresh images and real timestamps, never DOM, selectors, labels or URL metadata.',
+  screen: 'Observe viewport pixels or send one physical input. Start with action look. click, move, drag, scroll, type, press, back, forward and reload require the latest observationId; field descriptions state each action\'s arguments. Rejected requests keep that observationId usable; after failed captures, back, forward or reload can recover without one. Returns fresh images, real timestamps and whether the main frame navigated, never DOM, selectors, labels or URL metadata.',
   goto: 'Navigate to an HTTP(S) URL. Alias for navigate.',
   navigate: 'Navigate the selected tab to an HTTP(S) URL.',
   snapshot: 'Read accessible controls and source text, with short-lived element references. No model call.',

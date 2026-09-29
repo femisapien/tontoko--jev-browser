@@ -167,7 +167,8 @@ export class JevBrowser {
     }, parsed.command);
   }
   private screenCore(): ScreenController {
-    return this.screenController ??= new ScreenController(() => this.page, this.options.outputDir);
+    // A pending native dialog is reported as the reason a capture failed.
+    return this.screenController ??= new ScreenController(() => this.page, this.options.outputDir, () => { try { this.nativeBrowser.guard(); return false; } catch { return true; } });
   }
   /** Tool-surface refusal. Direct SDK Page access remains trusted caller code. */
   async recordScreenDenied(command: string): Promise<void> {
