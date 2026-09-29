@@ -4,6 +4,9 @@ import { BrowserError } from './errors.js';
 import { nativeSchemas, nativeReadOnly, type NativeCommand, type NativeName } from './native-schemas.js';
 import { invalidScreenRequest, screenSchema } from './screen.js';
 
+// Node timers overflow above 2147483647 ms; the CLI applies the same bound to its integer options.
+const positiveInteger = z.number().int().positive().max(2_147_483_647);
+const timeoutMs = positiveInteger.optional();
 const scope = z.string().min(1).optional();
 const instruction = z.string().trim().min(1);
 const values = z.record(z.string().min(1), z.string()).optional();
@@ -13,7 +16,7 @@ const field = z.union([fieldType, z.object({ type: fieldType, description: z.str
 const confidence = z.number().min(0).max(1).optional();
 const semanticActual = z.union([z.object({ description: instruction }).strict(), z.object({ ref: z.string().min(1) }).strict()]);
 const semanticRequest = z.object({ actual: semanticActual, expected: z.string().min(1), minConfidence: confidence, minSourceConfidence: confidence }).strict();
-const semanticBatch = z.object({ requests: z.array(semanticRequest).min(1), minConfidence: confidence, minSourceConfidence: confidence, scope, timeoutMs: z.number().int().positive().optional() }).strict();
+const semanticBatch = z.object({ requests: z.array(semanticRequest).min(1), minConfidence: confidence, minSourceConfidence: confidence, scope, timeoutMs }).strict();
 export const commandSchemas = {
   ...nativeSchemas,
   screen: screenSchema,
@@ -30,8 +33,8 @@ export const commandSchemas = {
   semantic_assert: z.object({ actual: semanticActual, expected: z.string().min(1), minConfidence: confidence, minSourceConfidence: confidence, scope }).strict(),
   semantic_compare_batch: semanticBatch,
   semantic_assert_batch: semanticBatch,
-  run: z.object({ instruction, values: runValues, semanticInputs:z.record(z.string().regex(/^\/(?:[^~]|~[01])*$/),z.number().min(0).max(1)).optional(), scope, maxSteps: z.number().int().positive().optional(), maxDecisions:z.number().int().positive().optional(),decisionRetries:z.number().int().min(0).max(2).optional(),settleTimeoutMs:z.number().int().positive().optional(),timeoutMs:z.number().int().positive().optional(),expect:z.union([nativeSchemas.assert,z.array(nativeSchemas.assert).min(1)]).optional() }).strict(),
-  resume: z.object({ continuationId: z.string().min(1), values: runValues, scope, timeoutMs:z.number().int().positive().optional() }).strict(),
+  run: z.object({ instruction, values: runValues, semanticInputs:z.record(z.string().regex(/^\/(?:[^~]|~[01])*$/),z.number().min(0).max(1)).optional(), scope, maxSteps: positiveInteger.optional(), maxDecisions:positiveInteger.optional(),decisionRetries:z.number().int().min(0).max(2).optional(),settleTimeoutMs:positiveInteger.optional(),timeoutMs,expect:z.union([nativeSchemas.assert,z.array(nativeSchemas.assert).min(1)]).optional() }).strict(),
+  resume: z.object({ continuationId: z.string().min(1), values: runValues, scope, timeoutMs }).strict(),
   screenshot: z.object({}).strict(),
   close: z.object({}).strict(),
 };

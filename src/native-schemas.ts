@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import { BrowserError } from './errors.js';
 
-const targetFields = { target: z.string().min(1).optional(), ref: z.string().min(1).optional(), element: z.string().optional(), frame: z.number().int().nonnegative().optional() };
+// Indexes share the 32-bit bound used for CLI and MCP integers instead of Number.MAX_SAFE_INTEGER.
+const index = z.number().int().nonnegative().max(2_147_483_647);
+const targetFields = { target: z.string().min(1).optional(), ref: z.string().min(1).optional(), element: z.string().optional(), frame: index.optional() };
 const targetRequired = (v: { target?: string; ref?: string }) => !!(v.target || v.ref);
 const targetMessage = { message: 'Provide a snapshot ref or a Playwright selector in target.' };
 const button = z.enum(['left', 'middle', 'right']).optional();
 const dimension = z.number().int().min(1).max(16384);
-const index = z.number().int().nonnegative();
 const filename = z.string().min(1).optional();
 const text = z.string();
 const allTabs = z.boolean().optional();
