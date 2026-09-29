@@ -53,6 +53,21 @@ test('session endpoints reject requests without the private authentication token
   const denied = await fetch(`http://127.0.0.1:${descriptor.port}/command`, { method: 'POST', body: JSON.stringify({ command: 'snapshot' }) }); assert.equal(denied.status, 401);
   const crossOrigin = await fetch(`http://127.0.0.1:${descriptor.port}/command`, { method: 'POST', headers: { authorization: `Bearer ${descriptor.token}`, origin: 'https://attacker.invalid' }, body: JSON.stringify({ command: 'snapshot' }) }); assert.equal(crossOrigin.status, 403);
 });
+test('session commands keep multibyte UTF-8 intact across request chunks', async t => {
+  const session = 'utf8-' + randomUUID().slice(0, 8); t.after(() => cli(['close', '--session', session]));
+  const open = await cli(['open', service.url, '--session', session]); assert.equal(open.code, 0, open.stdout);
+  let descriptor;
+  for (const directory of await readdir(join(cwd, 'sessions'))) {
+    try { const value = JSON.parse(await readFile(join(cwd, 'sessions', directory, 'session.json'), 'utf8')); if (value.name === session) descriptor = value; } catch {}
+  }
+  assert.ok(descriptor);
+  // About 300 KB of 3-byte characters spans several 64 KiB stream chunks, so characters straddle chunk boundaries.
+  const value = 'あ'.repeat(100_000) + 'é😀';
+  const send = async command => (await fetch(`http://127.0.0.1:${descriptor.port}/command`, { method: 'POST', headers: { authorization: `Bearer ${descriptor.token}`, 'content-type': 'application/json' }, body: JSON.stringify(command) })).json();
+  const set = await send({ command: 'storage', area: 'local', action: 'set', name: 'multibyte', value }); assert.equal(set.ok, true, JSON.stringify(set));
+  const stored = (await send({ command: 'storage', area: 'local', action: 'get', name: 'multibyte' })).result?.value ?? '';
+  assert.equal(stored.split('\uFFFD').length - 1, 0, 'replacement characters in the stored value'); assert.ok(stored === value, 'the stored value differs');
+});
 test('invalid session names cannot become filesystem paths', async () => {
   const r = await cli(['open', service.url, '--session', '../escape']); assert.equal(r.code, 1); assert.match(r.stdout, /INVALID_ARGUMENT/);
 });

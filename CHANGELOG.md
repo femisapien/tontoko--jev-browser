@@ -6,6 +6,7 @@
 - Empty or whitespace-only API key variables count as unset, so `JEV_API_KEY=` with a custom endpoint no longer fails with a `CONFIG` error that asks for the endpoint already configured.
 - An explicit `apiKey` no longer appears when a `JevBrowser` is inspected, logged or serialized with `JSON.stringify`.
 - Numeric input values echoed by the page are redacted from goal requests and results, like string values.
+- Persistent sessions no longer corrupt multibyte UTF-8 text in command bodies larger than one stream chunk, such as long Japanese text sent to `storage` or `type`.
 
 ## 0.11.0
 

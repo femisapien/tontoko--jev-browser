@@ -38,14 +38,15 @@ process.once('message', async (input: Start) => {
       const disconnected = () => { if (!res.writableEnded) abort.abort(); };
       res.once('close', disconnected);
       try {
-        let body = '', bytes = 0;
-        for await (const chunk of req) {
-          bytes += Buffer.byteLength(chunk);
+        const chunks: Buffer[] = []; let bytes = 0;
+        for await (const chunk of req as AsyncIterable<Buffer>) {
+          bytes += chunk.length;
           if (bytes > 1_048_576) throw new BrowserError('INVALID_ARGUMENT', 'Session command exceeds 1 MiB.');
-          body += chunk;
+          chunks.push(chunk);
         }
         let data: unknown;
-        try { data = JSON.parse(body); } catch { throw new BrowserError('INVALID_ARGUMENT', 'Session commands must be valid JSON.'); }
+        // Decode once: a multibyte UTF-8 character can span chunk boundaries.
+        try { data = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new BrowserError('INVALID_ARGUMENT', 'Session commands must be valid JSON.'); }
         touch();
         if (typeof data === 'object' && data !== null && 'command' in data && data.command === 'health') {
           respond(200, { ok: true, result: { session: input.name, status: 'open', screenOnly: core!.screenOnly } }); return;
