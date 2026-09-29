@@ -86,6 +86,32 @@ on the selected tab, and fails with `NO_FILE_CHOOSER` after that tab navigates.
 Single-tab sessions see the same entries as before, with added `pageId` and
 download `id` fields.
 
+## Timeouts and error codes (next release)
+
+An operation whose `timeoutMs` budget runs out now fails with `TIMEOUT`
+instead of `CANCELLED`. `CANCELLED` remains for an aborted caller `signal` and
+for `close()` during an operation. Code that treated `CANCELLED` as "timed out
+or cancelled" should accept both codes.
+
+`JevBrowser` operations now reject with `BrowserError` in place of raw
+Playwright errors. Read `error.code` instead of matching Playwright error names
+or messages, and use `error.cause` for the original error in local diagnostics.
+Failures that CLI/MCP previously reported as `OPERATION_FAILED` or
+`CANCELLED` may now carry `NAVIGATION_FAILED`, `INVALID_SELECTOR`,
+`AMBIGUOUS_TARGET`, `BROWSER_LAUNCH_FAILED`, `TARGET_OBSCURED` or `TIMEOUT`.
+A click blocked by a covering element is `TARGET_OBSCURED` rather than
+`ACTION_INTERRUPTED` when Playwright shows it was never delivered.
+
+CLI/MCP error JSON gains a `retryable` boolean; existing fields are unchanged.
+`retryable` never authorizes repeating an action whose effect is unknown, and
+Jev Browser still performs no automatic retries. TypeScript code that
+constructs `BrowserError` now passes a `BrowserErrorCode`; cast a code that is
+not in that union.
+
+`close()` waits about one second for an in-flight operation, then closes owned
+resources. It still never closes a borrowed Page, context or browser. See
+[errors](api.md#errors-and-automation) for every new code.
+
 ## Removing the Pi adapter (next minor release)
 
 The `@tontoko/jev-browser/pi` export, bundled Pi adapter and its dedicated launch

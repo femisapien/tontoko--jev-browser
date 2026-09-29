@@ -2,7 +2,7 @@
 
 ## SDK construction and lifecycle
 
-`new JevBrowser({ page, ...options })` borrows a Playwright Page. `await JevBrowser.launch(options)` launches or attaches. `close()` disposes only resources owned by the instance; async disposal is supported. Do not operate a Page concurrently from another core or external writer. Concurrent operations on one core return `BUSY`.
+`new JevBrowser({ page, ...options })` borrows a Playwright Page. `await JevBrowser.launch(options)` launches or attaches. `close()` disposes only resources owned by the instance; async disposal is supported. It gives an in-flight operation about one second to unwind, then closes owned resources anyway; borrowed ones are never closed. Do not operate a Page concurrently from another core or external writer. Concurrent operations on one core return `BUSY`.
 
 Options include:
 
@@ -15,7 +15,7 @@ Options include:
 - `captureDialogs`: holds `alert`, `confirm`, `prompt` and `beforeunload` dialogs for `handle_dialog` even when they open between operations. `launch()`, and therefore the CLI and MCP server, defaults to `true`. A borrowed Page defaults to `false`: Jev holds only dialogs that open while one of its operations runs, and Playwright's default dismissal applies to the caller's own Page actions.
 - `screenOnly`: fixes CLI/MCP/shared dispatch to `screen` and `close` for the session lifetime. Direct caller Page access remains trusted. `allowCommand` additionally receives `{command:'screen',request}` for screen operations; existing allowlists still need to permit it explicitly.
 
-Per-operation `signal`, `timeoutMs` and `scope` are available where relevant. The default operation budget is 30 seconds. Cancellation does not roll back completed effects. User-supplied callbacks and custom decision engines must honor the signal and remain bounded.
+Per-operation `signal`, `timeoutMs` and `scope` are available where relevant. The default operation budget is 30 seconds, and 60 seconds for `run` and `resume`. A constructor `timeoutMs` replaces both defaults and is also the timeout of each Jev HTTP request, which is 15 seconds when it is omitted. A per-operation `timeoutMs` sets only that operation's budget. An exhausted budget fails with `TIMEOUT`; an aborted caller `signal` or `close()` fails with `CANCELLED`. Page evaluation has no Playwright timeout, so work stuck in a hung renderer is abandoned about one second after the deadline or cancellation and the Page is released for the next operation. A result that settles before that is returned even if the deadline passed meanwhile, so an executed action is not reported as cancelled. Cancellation does not roll back completed effects. User-supplied callbacks and custom decision engines must honor the signal and remain bounded.
 
 ## Main methods
 
@@ -36,7 +36,7 @@ Per-operation `signal`, `timeoutMs` and `scope` are available where relevant. Th
 | `native(command, options?)` | Typed command union; mechanical operation without a model |
 | `screenshot(options?)` | Viewport PNG Buffer |
 | `screen(request, options?)` | Viewport images, physical inputs, observation IDs and actual timestamps; no DOM/URL metadata. See [screen review](screen-review.md). |
-| `close()` | Disposes references/listeners, closes owned resources |
+| `close()` | Disposes references/listeners, closes owned resources; waits at most about one second for an in-flight operation |
 
 `observe` plans are local and single-use. `act(plan)` and `act({id: plan.id})` use the internally retained action, not fields supplied by the caller. A new AI observation, snapshot or navigation can invalidate a plan. Native snapshot refs may survive several operations as long as the original node and its meaning still match; a new snapshot replaces the reference set. Use a fresh snapshot after `STALE_TARGET`.
 
@@ -108,7 +108,21 @@ A dialog result must be handled with `handle_dialog` before other operations. `c
 
 ## Errors and automation
 
-Stable codes distinguish configuration, unsupported schemas, missing candidates/evidence, stale refs/plans, cancelled or uncertain actions, failed assertions, denied capabilities, and session failures. CLI/MCP sanitize unexpected errors instead of returning provider response bodies. SDK caller code may still see Playwright errors and should treat them as local diagnostics.
+`JevBrowser` operations reject with `BrowserError`. Its `code` is stable: codes are never renamed or removed, and the exported `BrowserErrorCode` type lists them. `retryable` is true only when repeating the same call unchanged may succeed and cannot repeat an effect of the failed attempt, for example `BUSY`, `STALE_SNAPSHOT`, a transient `PROVIDER_ERROR`, or a `TIMEOUT` before any action started. It is false once an action has started. Jev Browser itself never retries. `cause` keeps the original Playwright or provider error for local diagnostics. CLI/MCP errors are `{code, message, retryable, partial?, semantic?}` and never include `cause` or provider response bodies.
+
+| Code | Meaning |
+| --- | --- |
+| `TIMEOUT` | The operation's `timeoutMs` budget, or a caller timeout signal, ran out. The message says whether an action had started. |
+| `CANCELLED` | The caller's `signal` aborted, or `close()` ran during the operation. |
+| `TARGET_OBSCURED` | Another element intercepts pointer events over the target, and Playwright's call log shows the action was never delivered. Dismiss the covering element, then observe again. |
+| `AMBIGUOUS_TARGET` | A caller selector matched several elements under Playwright strict mode. Use a more specific selector or a snapshot ref. |
+| `INVALID_SELECTOR` | A caller selector or `scope` could not be parsed. |
+| `NAVIGATION_FAILED` | Navigation, back, forward or reload failed, for example on a DNS or connection error. |
+| `BROWSER_LAUNCH_FAILED` | Launching or attaching to a browser failed. A missing browser build names the `jev-browser install` command. |
+| `ACTION_INTERRUPTED`, `ACTION_FAILED` | An AI-planned action started and did not finish normally. It may have changed the page. |
+| `OPERATION_FAILED` | Any other unexpected local failure. |
+
+Messages for mapped Playwright failures add the first line of the underlying error, capped at 200 characters, with URL credentials, query and fragment removed. Messages thrown by page code during evaluation are withheld. Other stable codes distinguish configuration, unsupported schemas, missing candidates/evidence, stale refs/plans, failed assertions, denied capabilities, and session failures.
 
 A native/AI command returning `executed` means the operation ran, not that the business workflow succeeded. Goal execution can also establish UI readback by comparing a fresh result record with actual supplied values. Inspect the verification source and unobserved fields; this does not prove database durability. Never treat confidence or the absence of an exception as a passed E2E assertion.
 
