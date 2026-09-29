@@ -101,7 +101,7 @@ await browser.native({ command: 'trace', action: 'start' });
 await browser.native({ command: 'trace', action: 'stop', filename: 'trace.zip' });
 ```
 
-Assertions support `visible`, `hidden`, `enabled`, `text`, `value`, `checked`, `count`, `url`, `title`. They poll within the operation budget, up to five seconds, and fail with `ASSERTION_FAILED`. Text assertions compare exact `textContent`. Native `select_option` replaces the selection set as Playwright does; AI `select`/`deselect` candidates preserve unrelated multiselect choices.
+Assertions support `visible`, `hidden`, `enabled`, `text`, `value`, `checked`, `count`, `url`, `title`. They poll within the operation budget, up to five seconds, and fail with `ASSERTION_FAILED` when the value does not match in time. Errors from reading the target, such as a strict-mode violation when a selector matches several elements, propagate as errors rather than `ASSERTION_FAILED`. Text assertions compare exact `textContent`. Native `select_option` replaces the selection set as Playwright does; AI `select`/`deselect` candidates preserve unrelated multiselect choices.
 
 A dialog result must be handled with `handle_dialog` before other operations. `downloads` supports `list`, `save`, `cancel`; supply an index from the current list and a chosen output filename. File upload can use a file input target or a pending chooser. Screenshots support `type`, `fullPage`, target and output filename. Cookie/state/console/trace results may contain secrets.
 

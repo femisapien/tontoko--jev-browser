@@ -28,7 +28,7 @@ npm run build
 node dist/cli.js --help
 ```
 
-`jev-browser install` installs the browser build required by the Playwright version this package bundles. Use it instead of the project's own `npx playwright install` when your project pins a different Playwright version; otherwise the two builds can differ and the wrong one is missing at run time.
+`jev-browser install` installs the browser build required by the Playwright version this package bundles. Use it instead of the project's own `npx playwright install` when your project pins a different Playwright version; otherwise the two builds can differ and the wrong one is missing at run time. The SDK does not load Playwright Test, so your project's own `@playwright/test` can stay on its version and pass its `page` to `JevBrowser`.
 
 The release tarball includes compiled JavaScript, declarations, the DOM bundle, documentation, and examples. There is no postinstall browser download and no requirement for a global browser daemon. The package is distributed on GitHub Releases; a registry publication is not implied.
 
