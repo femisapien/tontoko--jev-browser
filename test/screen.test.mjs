@@ -112,6 +112,38 @@ test('invalid screen commands cannot inject selectors or privileged keyboard cho
  await assert.rejects(core.screen({action:'click',x:421,y:20,observationId:seen.observationId}),{code:'SCREEN_COORDINATES'});
  assert.equal(await page.locator('input').inputValue(),'');
 });
+test('rejected screen requests send nothing and keep the latest observation usable',async t=>{
+ const {core,page}=await fixture(t,{screenOnly:true,allowCommand:command=>!(command.command==='screen'&&command.request.action==='press')});
+ const seen=await core.screen({action:'look'});
+ for(const [request,code] of [
+  [{action:'click',x:60,y:40},'INVALID_ARGUMENT'],
+  [{action:'scroll',deltaX:0,deltaY:40,x:5,observationId:seen.observationId},'INVALID_ARGUMENT'],
+  [{action:'click',x:421,y:20,observationId:seen.observationId},'SCREEN_COORDINATES'],
+  [{action:'press',key:'Tab',observationId:seen.observationId},'ACTION_DENIED'],
+  [{action:'click',x:60,y:40,observationId:'an-older-observation'},'STALE_SCREEN'],
+ ])await assert.rejects(core.screen(request),{code});
+ await assert.rejects(executeCommand(core,parseCommand({command:'snapshot'})),{code:'SCREEN_ONLY'});
+ assert.equal(await page.evaluate(()=>document.activeElement===document.body),true);
+ const next=await core.screen({action:'click',x:60,y:40,observationId:seen.observationId});
+ assert.equal(next.action.outcome,'executed');assert.equal(await page.evaluate(()=>document.activeElement?.tagName),'INPUT');
+});
+test('screen validation names the action and field and returns the current observationId',async t=>{
+ const {core}=await fixture(t);
+ let seen=await core.screen({action:'look'});
+ await assert.rejects(core.screen({action:'click',x:60,y:40}),error=>{
+  assert.equal(error.code,'INVALID_ARGUMENT');assert.match(error.message,/click/);assert.match(error.message,/observationId/);
+  assert.deepEqual(error.details,{action:'click',issues:[{path:'observationId',message:error.details.issues[0].message}],observationId:seen.observationId});
+  return true;
+ });
+ await assert.rejects(core.screen({action:'capture',capture:{frames:2,intervalMs:20}}),error=>{
+  assert.match(error.message,/action: Expected one of look, click/);assert.equal(error.details.action,undefined);return true;
+ });
+ await assert.rejects(core.screen({action:'scroll',observationId:seen.observationId}),error=>error.details.issues[0].path==='deltaY');
+ // An omitted wheel delta is 0. wait sends no input, so it observes without an observationId.
+ seen=await core.screen({action:'scroll',deltaY:40,observationId:seen.observationId});assert.equal(seen.action.outcome,'executed');
+ seen=await core.screen({action:'wait',milliseconds:0});assert.equal(seen.action.outcome,'observed');
+ await assert.rejects(core.screen({action:'wait'}),error=>error.details.issues[0].path==='milliseconds'&&error.details.observationId===seen.observationId);
+});
 test('screen emits timestamped transient frames and writes evidence without duplicating typed text',async t=>{
  const outputDir=await mkdtemp(join(root,'evidence-'));const {core,page}=await fixture(t,{outputDir});assert.equal(typeof core.screen,'function');
  let r=await core.screen({action:'look'});r=await core.screen({action:'click',x:50,y:35,observationId:r.observationId});

@@ -44,3 +44,24 @@ test('MCP advertises flat screen arguments and rejects incomplete actions before
   }
   assert.equal(starts, 0);
 });
+
+test('MCP screen discovery states per-action arguments and validation names the failing field', async t => {
+  const server = createMcpServer(async () => { throw new Error('Unexpected browser startup'); }, { screenOnly: true });
+  const client = new Client({ name: 'screen-tool-fields', version: '1' });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  t.after(async () => { await client.close(); await server.close(); });
+  await server.connect(st);
+  await client.connect(ct);
+  const schema = (await client.listTools()).tools.find(tool => tool.name === 'browser_screen').inputSchema;
+  for (const [name, property] of Object.entries(schema.properties)) assert.ok(property.description?.length > 20, `${name} needs a description`);
+  assert.match(schema.properties.observationId.description, /Required for click.*Optional for wait/);
+  assert.match(schema.properties.action.description, /capture/);
+  assert.match(schema.properties.deltaX.description, /omitted delta is 0/);
+  const error = async args => JSON.parse((await client.callTool({ name: 'browser_screen', arguments: args })).content.find(item => item.type === 'text').text).error;
+  const missing = await error({ action: 'click', x: 20, y: 30 });
+  assert.equal(missing.code, 'INVALID_ARGUMENT');
+  assert.match(missing.message, /^Invalid screen click request: observationId: /);
+  assert.deepEqual(missing.details.issues.map(issue => issue.path), ['observationId']);
+  assert.deepEqual((await error({ action: 'scroll', deltaY: 10 })).details.issues.map(issue => issue.path), ['observationId']);
+  assert.deepEqual((await error({ action: 'wait' })).details.issues.map(issue => issue.path), ['milliseconds']);
+});

@@ -7,9 +7,12 @@ import { BrowserError } from './errors.js';
 import { FileAccess } from './paths.js';
 import type { OperationContext } from './types.js';
 
+const required = (message: string) => ({ error: (issue: { input?: unknown }) => issue.input === undefined ? message : undefined });
 const capture = z.object({ frames: z.number().int().min(1).max(10), intervalMs: z.number().int().min(20).max(1000) }).strict().optional();
-const observed = { observationId: z.string().min(1), capture };
-const point = { x: z.number().finite(), y: z.number().finite() };
+const observationId = z.string(required('Required for this action. Use the observationId from the latest screen result.')).min(1);
+const observed = { observationId, capture };
+const coordinate = () => z.number(required('Required for this action, in viewport image pixels.')).finite();
+const point = { x: coordinate(), y: coordinate() };
 const navigationKeys = ['Enter','Tab','Escape','Backspace','Delete','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown','Space'] as const;
 const editKeys = [
   ...navigationKeys, 'Shift+Tab',
@@ -17,21 +20,23 @@ const editKeys = [
     ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'].map(key => modifier+'+'+key)),
   ...['Control','Meta','ControlOrMeta'].flatMap(modifier => ['a','A','z','Z','y','Y','Shift+z','Shift+Z'].map(key => modifier+'+'+key)),
 ];
-const key = z.enum(editKeys);
+const key = z.enum(editKeys, { error: 'Required for press: one editing or navigation key from the published enum.' });
 /** Pixels and physical inputs only; no selectors, DOM descriptions, arbitrary URL or JavaScript. */
 export const screenSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('look'), capture }).strict(),
   z.object({ action: z.literal('click'), ...observed, ...point }).strict(),
   z.object({ action: z.literal('move'), ...observed, ...point }).strict(),
-  z.object({ action: z.literal('drag'), ...observed, ...point, toX: z.number().finite(), toY: z.number().finite() }).strict(),
-  z.object({ action: z.literal('scroll'), ...observed, deltaX: z.number().finite(), deltaY: z.number().finite(), x: z.number().finite().optional(), y: z.number().finite().optional() }).strict(),
-  z.object({ action: z.literal('type'), ...observed, text: z.string().max(20000) }).strict(),
+  z.object({ action: z.literal('drag'), ...observed, ...point, toX: coordinate(), toY: coordinate() }).strict(),
+  // An omitted wheel delta is 0; execution requires at least one of them.
+  z.object({ action: z.literal('scroll'), ...observed, deltaX: z.number().finite().optional(), deltaY: z.number().finite().optional(), x: z.number().finite().optional(), y: z.number().finite().optional() }).strict(),
+  z.object({ action: z.literal('type'), ...observed, text: z.string(required('Required for type: the literal text for the focused element.')).max(20000) }).strict(),
   z.object({ action: z.literal('press'), ...observed, key }).strict(),
   z.object({ action: z.literal('back'), ...observed }).strict(),
   z.object({ action: z.literal('forward'), ...observed }).strict(),
   z.object({ action: z.literal('reload'), ...observed }).strict(),
-  z.object({ action: z.literal('wait'), ...observed, milliseconds: z.number().int().min(0).max(10000) }).strict(),
-]);
+  // wait sends no input, so it observes without requiring an observationId.
+  z.object({ action: z.literal('wait'), ...observed, observationId: observationId.optional(), milliseconds: z.number(required('Required for wait: 0 to 10000.')).int().min(0).max(10000) }).strict(),
+], { error: (issue): string | undefined => issue.code === 'invalid_union' ? 'Expected one of '+[...actions].join(', ')+'.' : undefined });
 export type ScreenRequest = z.infer<typeof screenSchema>;
 export interface ScreenFrame { data: string; mimeType: 'image/png'; capturedAt: string; elapsedMs: number; path?: string }
 export interface ScreenResult {
@@ -68,6 +73,15 @@ async function viewportGeometry(page: Page, op: OperationContext): Promise<Viewp
   } finally { await value.dispose(); }
 }
 
+/** Field-level feedback naming the action and field paths; never echoes supplied values. */
+export function invalidScreenRequest(input: unknown, issues: readonly { path: readonly PropertyKey[]; message: string }[], observationId?: string): BrowserError {
+  const kind = input && typeof input === 'object' && 'action' in input && typeof input.action === 'string' && (actions as Set<string>).has(input.action) ? input.action : undefined;
+  const fields = issues.map(issue => ({ path: issue.path.map(String).join('.') || 'request', message: issue.message }));
+  const error = new BrowserError('INVALID_ARGUMENT', `Invalid screen ${kind ? kind+' request' : 'request'}: ${fields.map(field => field.path+': '+field.message).join(' ')}`);
+  error.details = { ...(kind ? { action: kind } : {}), issues: fields, ...(observationId ? { observationId } : {}) };
+  return error;
+}
+
 /** Owned by one JevBrowser and called under its existing operation/Page lease. */
 export class ScreenController {
   private observation?: Observation;
@@ -87,6 +101,12 @@ export class ScreenController {
     page.on('framenavigated', onNavigation); page.on('popup', onPopup); page.on('filechooser', onFileChooser);
     return this.tracking = tracking;
   }
+  /** The latest observation, when cheap page, navigation and viewport checks still hold. */
+  private current(): Observation | undefined {
+    const observation = this.observation, page = this.page();
+    return observation && observation.page === page && this.tracking?.page === page && observation.generation === this.tracking.generation &&
+      dimensionsEqual(observation.configured, page.viewportSize()) ? observation : undefined;
+  }
   private async record(action: EvidenceAction, input: object, frames: ScreenFrame[], observationId?: string): Promise<void> {
     if (!this.files) return;
     this.journal ??= this.files.write('', 'screen-'+randomUUID()+'.jsonl', 'jsonl');
@@ -97,37 +117,52 @@ export class ScreenController {
   }
   async deny(command: string): Promise<void> {
     const startedAt = new Date().toISOString();
-    this.observation = undefined;
     await this.record({ id: randomUUID(), kind: 'denied-command', startedAt, durationMs: 0, outcome: 'denied' }, { command }, []);
   }
   async execute(raw: ScreenRequest, operation: () => OperationContext, authorize?: (request: ScreenRequest, operation: OperationContext) => Promise<boolean>, perform: (action: () => Promise<void>) => Promise<void> = action => action()): Promise<ScreenResult> {
     const started = performance.now(), startedAt = new Date().toISOString();
     const kind = raw && typeof raw === 'object' && 'action' in raw && actions.has(raw.action) ? raw.action : 'unsupported';
     const action: EvidenceAction = { id: randomUUID(), kind, startedAt, durationMs: 0, outcome: 'failed' };
-    const previous = this.observation; this.observation = undefined;
+    const previous = this.observation;
     const frames: ScreenFrame[] = [];
     let request: ScreenRequest | undefined, input: Record<string,unknown> = {}, effectStarted = false, authorized = false;
     try {
       const parsed = screenSchema.safeParse(raw);
-      if (!parsed.success) throw new BrowserError('INVALID_ARGUMENT', 'Invalid screen request. Only viewport pixels and supported physical inputs are available.');
+      if (!parsed.success) throw invalidScreenRequest(raw, parsed.error.issues, this.current()?.id);
       request = parsed.data;
-      if (request.action === 'scroll' && (request.x === undefined) !== (request.y === undefined))
-        throw new BrowserError('INVALID_ARGUMENT', 'A scroll position requires both x and y.');
+      const invalid = (field: string, message: string) => invalidScreenRequest(raw, [{ path: [field], message }], this.current()?.id);
+      if (request.action === 'scroll') {
+        if ((request.x === undefined) !== (request.y === undefined)) throw invalid(request.x === undefined ? 'x' : 'y', 'A scroll position requires both x and y.');
+        if (request.deltaX === undefined && request.deltaY === undefined) throw invalid('deltaY', 'Provide deltaX, deltaY or both; an omitted delta is 0.');
+        request = { ...request, deltaX: request.deltaX ?? 0, deltaY: request.deltaY ?? 0 };
+      }
       input = Object.fromEntries(Object.entries(request).filter(([name]) => !['text','capture','observationId','action'].includes(name)));
       if (request.action === 'type') input.textLength = request.text.length;
       if (authorize && await authorize(request, operation()) !== true)
         throw new BrowserError('ACTION_DENIED', 'The caller policy denied this screen operation.');
       authorized = true;
       operation().signal.throwIfAborted();
+      const supplied = request.action === 'look' ? undefined : request.observationId;
+      if (supplied !== undefined) {
+        if (!previous || previous.id !== supplied) throw new BrowserError('STALE_SCREEN', 'The screen observation is no longer current. Look again before any input.');
+        const inside = (x: number, y: number) => x >= 0 && y >= 0 && x < previous.viewport.width && y < previous.viewport.height;
+        if ('x' in request && request.x !== undefined && request.y !== undefined && !inside(request.x,request.y) ||
+          request.action === 'drag' && !inside(request.toX,request.toY))
+          throw new BrowserError('SCREEN_COORDINATES', 'Input coordinates must be inside the observed viewport image.');
+        if (['click','move','drag','scroll'].includes(request.action) && (previous.geometry.offsetX !== 0 || previous.geometry.offsetY !== 0 ||
+          previous.geometry.scale !== 1 && previous.page.context().browser()?.browserType().name() !== 'chromium'))
+          throw new BrowserError('SCREEN_VIEWPORT_UNSUPPORTED', 'Pointer input for this viewport transform is not supported. This is a tool capability limit; no input was sent.');
+      }
+      // Rejections above send nothing and keep the latest observation usable. From here, each capture or input attempt consumes it.
+      this.observation = undefined;
       const page = this.page(), tracking = this.track(page);
       const checkPopup = () => {
         if (tracking.popup && !tracking.popup.isClosed()) throw new BrowserError('SCREEN_POPUP_UNSUPPORTED','A new browser tab opened. This viewport session cannot inspect or switch that tab; this is a tool capability limit, not a product failure.');
         if (tracking.fileChooser) throw new BrowserError('SCREEN_FILE_CHOOSER_UNSUPPORTED','A native file chooser opened. This viewport tool cannot inspect or operate it; this is a tool capability limit, not a product failure.');
       };
       checkPopup();
-      if (request.action !== 'look') {
-        if (!previous || previous.id !== request.observationId || previous.page !== page ||
-          previous.generation !== tracking.generation || !dimensionsEqual(previous.configured, page.viewportSize()))
+      if (previous && supplied !== undefined) {
+        if (previous.page !== page || previous.generation !== tracking.generation || !dimensionsEqual(previous.configured, page.viewportSize()))
           throw new BrowserError('STALE_SCREEN', 'The screen observation is no longer current. Look again before any input.');
         if (!page.viewportSize()) {
           const op=operation();
@@ -137,13 +172,6 @@ export class ScreenController {
         }
         if (!sameGeometry(previous.geometry, await viewportGeometry(page, operation())) || previous.generation !== tracking.generation)
           throw new BrowserError('STALE_SCREEN', 'The visible viewport changed. Look again before any input.');
-        const inside = (x: number, y: number) => x >= 0 && y >= 0 && x < previous.viewport.width && y < previous.viewport.height;
-        if ('x' in request && request.x !== undefined && request.y !== undefined && !inside(request.x,request.y) ||
-          request.action === 'drag' && !inside(request.toX,request.toY))
-          throw new BrowserError('SCREEN_COORDINATES', 'Input coordinates must be inside the observed viewport image.');
-        if (['click','move','drag','scroll'].includes(request.action) && (previous.geometry.offsetX !== 0 || previous.geometry.offsetY !== 0 ||
-          previous.geometry.scale !== 1 && page.context().browser()?.browserType().name() !== 'chromium'))
-          throw new BrowserError('SCREEN_VIEWPORT_UNSUPPORTED', 'Pointer input for this viewport transform is not supported. This is a tool capability limit; no input was sent.');
       }
       const point = (x: number, y: number) => ({ x: x / previous!.geometry.scale, y: y / previous!.geometry.scale });
       operation().signal.throwIfAborted();
@@ -161,7 +189,7 @@ export class ScreenController {
           break; }
         case 'scroll':
           if (request.x !== undefined && request.y !== undefined) { const p=point(request.x,request.y); await page.mouse.move(p.x,p.y); }
-          await page.mouse.wheel(request.deltaX,request.deltaY); break;
+          await page.mouse.wheel(request.deltaX ?? 0,request.deltaY ?? 0); break;
         case 'type':
           for (const character of request.text) { operation().signal.throwIfAborted(); await page.keyboard.type(character); }
           break;

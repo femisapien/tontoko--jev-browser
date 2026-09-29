@@ -13,7 +13,7 @@ export type BrowserErrorCode =
   | 'SESSION_NOT_FOUND' | 'SESSION_START_FAILED' | 'SESSION_UNAVAILABLE' | 'STALE_DIALOG' | 'STALE_PLAN' | 'STALE_SCREEN' | 'STALE_SNAPSHOT' | 'STALE_TARGET'
   | 'STEP_LIMIT' | 'TARGET_OBSCURED' | 'TIMEOUT' | 'UNAUTHORIZED' | 'UNRESOLVED_ACTION' | 'UNSUPPORTED_INPUT' | 'UNSUPPORTED_SCHEMA' | 'VALUE_MISMATCH';
 export interface BrowserErrorOptions { cause?: unknown; retryable?: boolean }
-export interface PublicError { code: BrowserErrorCode; message: string; retryable: boolean; partial?: RunResult; semantic?: SemanticFailure }
+export interface PublicError { code: BrowserErrorCode; message: string; retryable: boolean; partial?: RunResult; semantic?: SemanticFailure; details?: Record<string, unknown> }
 
 /** Stable error codes are safe to expose over CLI/MCP; never include provider bodies. `cause` stays local and is never serialized. */
 export class BrowserError extends Error {
@@ -21,6 +21,8 @@ export class BrowserError extends Error {
   semantic?: SemanticFailure;
   /** True only when repeating the same call unchanged may succeed and cannot repeat an effect of this attempt. */
   retryable: boolean;
+  /** Sanitized machine-readable context; never page content. */
+  details?: Record<string, unknown>;
   constructor(readonly code: BrowserErrorCode, message: string, options: BrowserErrorOptions = {}) {
     super(message, 'cause' in options ? { cause: options.cause } : undefined);
     this.name = 'BrowserError';
@@ -73,5 +75,5 @@ export function launchError(error: unknown, browser: string): BrowserError {
 
 export function publicError(error: unknown): PublicError {
   const mapped = browserError(error);
-  return { code: mapped.code, message: mapped.message, retryable: mapped.retryable, ...(mapped.partial ? { partial: mapped.partial } : {}), ...(mapped.semantic ? { semantic: mapped.semantic } : {}) };
+  return { code: mapped.code, message: mapped.message, retryable: mapped.retryable, ...(mapped.partial ? { partial: mapped.partial } : {}), ...(mapped.semantic ? { semantic: mapped.semantic } : {}), ...(mapped.details ? { details: mapped.details } : {}) };
 }
