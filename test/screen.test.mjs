@@ -115,6 +115,13 @@ test('failed captures report a reason, and history actions recover without an ob
  await page.close();
  await assert.rejects(core.screen({action:'look'}),error=>error.code==='SCREEN_FAILED'&&error.details.reason==='page-closed');
 });
+test('a crashed page is reported as the capture failure reason without suggesting history recovery',{skip:(process.env.JEV_BROWSER??'chromium')!=='chromium'},async t=>{
+ const {core,page}=await fixture(t);await core.screen({action:'look'});
+ const crashed=page.waitForEvent('crash');const cdp=await page.context().newCDPSession(page);cdp.send('Page.crash').catch(()=>{});await crashed;
+ await assert.rejects(core.screen({action:'look'}),error=>{
+  assert.equal(error.code,'SCREEN_FAILED');assert.deepEqual(error.details,{reason:'page-crashed'});assert.equal(/reload/.test(error.message),false);return true;
+ });
+});
 test('a native dialog that interrupts a capture is reported as its reason',async t=>{
  const {core,page}=await fixture(t);let fontRequested;const font=new Promise(resolve=>{fontRequested=resolve;});
  const s=await site(t,(req,res)=>{if(req.url==='/held.woff2'){fontRequested();return;}res.setHeader('content-type','text/html');res.end('<p>Visible</p>');});

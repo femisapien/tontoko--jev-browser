@@ -51,10 +51,10 @@ export interface ScreenResult {
   action: { id: string; kind: ScreenRequest['action']; startedAt: string; durationMs: number; outcome: 'observed' | 'executed' | 'denied' | 'failed' | 'unknown' };
 }
 /** Sanitized SCREEN_FAILED/SCREEN_INTERRUPTED `details.reason`; never page content. */
-export type ScreenFailureReason = 'timeout' | 'cancelled' | 'navigation' | 'page-closed' | 'dialog' | 'unknown';
+export type ScreenFailureReason = 'timeout' | 'cancelled' | 'navigation' | 'page-closed' | 'page-crashed' | 'dialog' | 'unknown';
 type ViewportGeometry = { width: number; height: number; scale: number; offsetX: number; offsetY: number; scrollX: number; scrollY: number };
 type Observation = { id: string; page: Page; generation: number; viewport: ScreenResult['viewport']; configured: ReturnType<Page['viewportSize']>; geometry: ViewportGeometry };
-type Tracking = { page: Page; generation: number; navigations: Set<Request>; waiters: Set<() => void>; interrupt?: AbortController; popup?: Page; fileChooser?: boolean; detach: () => void };
+type Tracking = { page: Page; generation: number; navigations: Set<Request>; waiters: Set<() => void>; interrupt?: AbortController; popup?: Page; fileChooser?: boolean; crashed?: boolean; detach: () => void };
 type FrameEvidence = { sha256: string; width: number; height: number };
 type Capture = { frames: ScreenFrame[]; evidence: FrameEvidence[]; viewport: ScreenResult['viewport']; geometry: ViewportGeometry };
 type EvidenceAction = Omit<ScreenResult['action'],'kind'> & { kind: string };
@@ -124,7 +124,7 @@ export class ScreenController {
     this.tracking?.detach();
     const tracking: Tracking = { page, generation: 0, navigations: new Set(), waiters: new Set(), detach: () => {
       page.off('framenavigated', onNavigation); page.off('request', onRequest); page.off('requestfinished', onRequestDone); page.off('requestfailed', onRequestDone);
-      page.off('popup', onPopup); page.off('filechooser', onFileChooser);
+      page.off('popup', onPopup); page.off('filechooser', onFileChooser); page.off('crash', onCrash);
     } };
     const wake = () => { for (const waiter of tracking.waiters) waiter(); };
     // Subframe content can change like any other page content; only a main-frame navigation replaces the observed document.
@@ -135,8 +135,9 @@ export class ScreenController {
     const onRequestDone = (request: Request) => { if (tracking.navigations.delete(request)) wake(); };
     const onPopup = (popup: Page) => { tracking.popup = popup; };
     const onFileChooser = () => { tracking.fileChooser = true; };
+    const onCrash = () => { tracking.crashed = true; };
     page.on('framenavigated', onNavigation); page.on('request', onRequest); page.on('requestfinished', onRequestDone); page.on('requestfailed', onRequestDone);
-    page.on('popup', onPopup); page.on('filechooser', onFileChooser);
+    page.on('popup', onPopup); page.on('filechooser', onFileChooser); page.on('crash', onCrash);
     return this.tracking = tracking;
   }
   /** The latest observation, when cheap page, navigation and viewport checks still hold. */
@@ -192,6 +193,7 @@ export class ScreenController {
   private failure(error: unknown, generation: number | undefined, signal: AbortSignal | undefined): ScreenFailureReason {
     const tracking = this.tracking;
     if (tracking?.page.isClosed()) return 'page-closed';
+    if (tracking?.crashed) return 'page-crashed';
     if (this.dialogPending?.()) return 'dialog';
     if (tracking && generation !== undefined && tracking.generation !== generation) return 'navigation';
     if (signal?.aborted) return (signal.reason as Error | undefined)?.name === 'TimeoutError' ? 'timeout' : 'cancelled';
@@ -326,7 +328,7 @@ export class ScreenController {
       const reason=this.failure(error,generation,signal);
       const failure=new BrowserError(effectStarted?'SCREEN_INTERRUPTED':'SCREEN_FAILED',effectStarted
         ?`The screen operation did not finish (${reason}); input may have reached the page. Look before deciding what to do next. No input was retried.`
-        :`The screen could not be captured (${reason}). No input was retried.`+(reason === 'page-closed' || reason === 'dialog' ? '' : ' Look again; while no current observation exists, back, forward and reload may omit observationId to recover.'));
+        :`The screen could not be captured (${reason}). No input was retried.`+(['page-closed','page-crashed','dialog'].includes(reason) ? '' : ' Look again; while no current observation exists, back, forward and reload may omit observationId to recover.'));
       failure.details={reason};failure.cause=error;
       throw failure;
     }

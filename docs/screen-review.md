@@ -37,7 +37,7 @@ The optional allowCommand callback also receives {command:'screen', request} and
 
 ## Images and physical inputs
 
-SDK browser.screen(request), CLI screen --args JSON, and MCP browser_screen share the same strict action union. The MCP tool advertises one flat object for hosts that reject top-level unions; its field descriptions state which actions need each field. An invalid request returns `INVALID_ARGUMENT` naming the action and each failing field in the message and in `details.issues`. When the shared core rejects it, `details.observationId` also carries the current observation ID.
+SDK browser.screen(request), CLI screen --args JSON, and MCP browser_screen share the same strict action union. The MCP tool advertises one flat object for hosts that reject top-level unions; its field descriptions state which actions need each field. An invalid request returns `INVALID_ARGUMENT` naming the action and each failing field in the message and in `details.issues`. When the shared core rejects it, `details.observationId` also carries the current observation ID. Once the browser has started, MCP passes screen requests to the core for this validation; before startup, invalid requests are rejected without launching a browser.
 
 | Action | Additional arguments |
 | --- | --- |
@@ -68,9 +68,9 @@ A main-frame navigation during capture interrupts it. The capture, never the inp
 
 This does not make browser input atomic with page changes. Content can move, animate or update after capture without navigating. Pixel-identical frames are deliberately not required: that would make animations and caret blinking unusable. Review the returned image before the next decision.
 
-Failed inputs are never automatically retried. The result can be unknown because the browser already received an input. Look again before deciding what to do next. `SCREEN_FAILED` and `SCREEN_INTERRUPTED` carry `details.reason`: `timeout`, `cancelled`, `navigation`, `page-closed`, `dialog` or `unknown`. The reason never contains page content. SDK callers can inspect the underlying error as `cause`.
+Failed inputs are never automatically retried. The result can be unknown because the browser already received an input. Look again before deciding what to do next. `SCREEN_FAILED` and `SCREEN_INTERRUPTED` carry `details.reason`: `timeout`, `cancelled`, `navigation`, `page-closed`, `page-crashed`, `dialog` or `unknown`. The reason never contains page content. SDK callers can inspect the underlying error as `cause`.
 
-A failed capture leaves no current observation. If looking keeps failing, back, forward and reload may omit observationId while no current observation exists. They recover through browser history and return a fresh observation. Whenever a current observation exists, they still require its ID. Pointer and keyboard inputs always require the current ID.
+A failed capture leaves no current observation. If looking keeps failing, back, forward and reload may omit observationId while no current observation exists. They recover through browser history and return a fresh observation. Whenever a current observation exists, they still require its ID. A closed or crashed page cannot recover this way; restart the session. Pointer and keyboard inputs always require the current ID.
 
 Browser-native dialogs, file choosers and new tabs are explicit capability limits; report them as tool limitations, not proof that product UX failed. This version does not provide screenshot-based native-dialog/file-chooser handling or tab switching. A file chooser is reported once with `SCREEN_FILE_CHOOSER_UNSUPPORTED`; no file is selected and later observations continue on the same page. Restart a restricted session after a native dialog or a new tab that stays open.
 
