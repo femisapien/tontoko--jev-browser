@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0
 
 - Added `jev-browser install [chromium|firefox|webkit] [--dry-run]`, which installs the browser build for the Playwright version this package bundles. A consumer that pins a different Playwright no longer needs to resolve this package's Playwright CLI by hand.
 
