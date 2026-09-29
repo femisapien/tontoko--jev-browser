@@ -38,6 +38,8 @@ export async function extractGrounded<S extends Record<string, z.ZodType>>(
     const sources = new Map<string, { value: string | number | boolean; evidence: TextEvidence }>();
     const criteria: Record<string, EntryType> = { __none__: 'No observed source actually supplies this field. Never guess.' };
     for (const source of snapshot.texts) {
+      // A shortened source does not hold the complete displayed value.
+      if (source.truncated) continue;
       const candidates = [source.text, numberFromText(source.text), source.value];
       for (const value of candidates) {
         if (value === undefined) continue;
@@ -68,7 +70,7 @@ export async function extractGrounded<S extends Record<string, z.ZodType>>(
   let decision: ExtractResult<unknown>['decision'];
   if (Object.keys(questions).length) {
     signal.throwIfAborted();
-    const result = await engine().decide({ state: { url: snapshot.url, title: snapshot.title, task: instruction, sources: snapshot.texts.map(source => ({ id: source.id, text: source.text, context: source.context, role: source.role, ...(source.value !== undefined ? { value: source.value } : {}) })) }, questions }, { signal });
+    const result = await engine().decide({ state: { url: snapshot.url, title: snapshot.title, task: instruction, sources: snapshot.texts.map(source => ({ id: source.id, text: source.text, context: source.context, role: source.role, ...(source.value !== undefined ? { value: source.value } : {}), ...(source.truncated ? { truncated: true } : {}) })) }, questions }, { signal });
     signal.throwIfAborted();
     const { answers, ...metadata } = result; decision = metadata;
     for (const [id, mapping] of mappings) {

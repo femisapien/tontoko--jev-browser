@@ -1,12 +1,17 @@
 import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
+import {z} from 'zod';
 import {JevBrowser} from '../dist/index.js';
+import {capture} from '../dist/observation.js';
+import {verifyReadback,waitForRelevantChange} from '../dist/completion.js';
+import {flattenInputs} from '../dist/bindings.js';
 import {fixtureBrowser,engine,httpServer} from './helpers.mjs';
 
 let browser;
 before(async()=>{browser=await fixtureBrowser();});
 after(async()=>{await browser?.close();});
 const forbidden={decide(){throw new Error('This observation must not reach a decision request.');}};
+const long='Terms '+'x'.repeat(994);
 
 // Schedule a real browser change between two reads of one capture; the browser outcome is not simulated.
 function between(page,change,times=1){
@@ -26,6 +31,12 @@ async function interrupted(t,change,{times=1,decider=forbidden}={}){
   t.after(async()=>{await core.close();await page.close();await server.close();});
   return {core,page};
 }
+async function content(t,html,decider=forbidden){
+  const page=await browser.newPage();await page.setContent(html);
+  const core=new JevBrowser({page,engine:decider});t.after(async()=>{await core.close();await page.close();});
+  return {core,page};
+}
+
 test('a snapshot interrupted by a real navigation is retaken on the new document',async t=>{
   const {core}=await interrupted(t,(page,url)=>page.goto(url+'/next'));
   const snapshot=await core.snapshot();
@@ -52,4 +63,41 @@ test('a child frame removed during capture is skipped instead of failing the cap
   const snapshot=await core.snapshot();
   assert.ok(snapshot.texts.some(source=>source.text==='First page'));
   assert.equal(snapshot.texts.some(source=>source.text==='Framed text'||source.frame!==0),false);
+});
+
+test('text longer than 700 characters is shortened with an explicit flag instead of dropped',async t=>{
+  const pair='y'.repeat(699)+'\u{1F600}'+'z'.repeat(20);
+  const {core}=await content(t,`<p>${long}</p><p>${pair}</p><p>Short</p>`);
+  const snapshot=await core.snapshot();
+  assert.deepEqual(snapshot.texts.map(({text,truncated})=>[text,truncated]),[[long.slice(0,700),true],['y'.repeat(699),true],['Short',undefined]]);
+  assert.equal(snapshot.truncatedTexts,false);assert.equal(snapshot.truncated,false);
+});
+test('extraction sends shortened text as context but never offers it as a copied value',async t=>{
+  const decider=engine(()=>candidate=>typeof candidate?.text==='string'&&candidate.text.startsWith('Terms'));
+  const {core}=await content(t,`<p>${long}</p><p>Order 42</p>`,decider);
+  await assert.rejects(core.extract('Read the terms',z.object({terms:z.string()})),{code:'EXTRACTION_MISSING'});
+  const [request]=decider.requests;
+  assert.deepEqual(request.state.sources.filter(source=>source.truncated).map(source=>source.text),[long.slice(0,700)]);
+  assert.deepEqual(Object.values(request.questions.f0.criteria).filter(candidate=>typeof candidate==='object').map(candidate=>candidate.text),['Order 42']);
+});
+test('semantic comparison never binds shortened text as the actual value',async t=>{
+  const decider=engine((question,request)=>{const sources=new Map((request.state.page?.sources??[]).map(source=>[source.id,source]));return candidate=>sources.get(candidate?.sourceId)?.text?.startsWith('Terms');});
+  const {core}=await content(t,`<p>${long}</p><p>Order 42</p>`,decider);
+  await assert.rejects(core.compareSemantic({actual:{description:'The terms paragraph'},expected:long.slice(0,700)}),{code:'SEMANTIC_NO_MATCH'});
+  assert.equal(decider.requests[0].state.page.sources.some(source=>source.text.startsWith('Terms')),false);
+});
+test('run readback never verifies an input against shortened text',async()=>{
+  const value='x'.repeat(700),inputs=flattenInputs({note:value}).map(input=>({...input,applied:true}));
+  const snapshot={id:'s',url:'https://example.invalid/',title:'Notes',elements:[],scroll:{y:0,maxY:0,height:720},truncated:false,truncatedTexts:false,truncatedElements:false,
+    texts:[{id:'note',frame:0,text:value,context:'Note',role:'definition',truncated:true}],records:[{id:'record',frame:0,textIds:['note'],context:'Note',readOnly:true}]};
+  let calls=0;
+  assert.equal(await verifyReadback(new Map(),snapshot,'Save the note',inputs,async()=>{calls++;return {answers:{completion:{choice:'complete',confidence:1},read_0:{choice:'note',confidence:1}}};}),undefined);
+  assert.equal(calls,0);
+});
+test('progress waits observe the same shortened long text as observation',async t=>{
+  const page=await browser.newPage();await page.setContent(`<p id="long">Pending ${'x'.repeat(800)}</p>`);
+  const observed=await capture(page,{maxElements:120,maxTexts:160});t.after(async()=>{await observed.dispose();await page.close();});
+  assert.equal(observed.data.texts[0]?.truncated,true);
+  await page.locator('#long').evaluate(node=>{node.textContent=node.textContent.replace('Pending','Saved');});
+  assert.equal(await waitForRelevantChange(page,observed,250,new AbortController().signal),true);
 });
