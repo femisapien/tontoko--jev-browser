@@ -9,6 +9,7 @@
 - Persistent sessions no longer corrupt multibyte UTF-8 text in command bodies larger than one stream chunk, such as long Japanese text sent to `storage` or `type`.
 - The SDK no longer loads Playwright Test at runtime. A project whose own `@playwright/test` differs from the bundled Playwright version can pass its test `page` to `JevBrowser` instead of failing with `Requiring @playwright/test second time` and `No tests found`.
 - Native `assert` raises errors from reading its target, such as a strict-mode violation when a selector matches several elements, instead of reporting them as `ASSERTION_FAILED`. Mismatches still fail with `ASSERTION_FAILED` after polling, and a Playwright wait that times out early under a shorter Page default timeout keeps polling within the assertion window.
+- Moved `dom-accessibility-api` to development dependencies because it ships only inside the DOM bundle, and stopped packing the unused unbundled `dist/dom.js`.
 
 ## 0.11.0
 
