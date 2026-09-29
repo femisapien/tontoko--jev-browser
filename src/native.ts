@@ -82,19 +82,21 @@ export class NativeBrowser extends BrowserEvents {
         if (c.action === 'new') { const url = c.url ? await this.host.validateURL(c.url) : undefined; const created = await this.context.newPage(); await this.host.select(created); if (url) await created.goto(url, { ...time, waitUntil: 'domcontentloaded' }); }
         if (c.action === 'select') { const selected = pages[c.index!]; if (!selected) throw new BrowserError('INVALID_ARGUMENT', 'Tab index is not present.'); await this.host.select(selected); }
         if (c.action === 'close') { const selected = c.index === undefined ? page : pages[c.index]; if (!selected) throw new BrowserError('INVALID_ARGUMENT', 'Tab index is not present.'); if (selected === page) { const replacement = pages.find(p => p !== selected) ?? await this.context.newPage(); await this.host.select(replacement); } await selected.close(); }
-        return { tabs: await Promise.all(this.context.pages().map(async (p, index) => ({ index, selected: p === this.host.page(), url: publicURL(p.url()), title: await p.title() }))) };
+        return { tabs: await Promise.all(this.context.pages().map(async (p, index) => ({ index, pageId: this.pageId(p), selected: p === this.host.page(), url: publicURL(p.url()), title: await p.title() }))) };
       }
       case 'frames': return { frames: await Promise.all(page.frames().map(async (f, index) => ({ index, name: f.name(), url: publicURL(f.url()), title: await f.title() }))) };
       case 'handle_dialog': return this.handleDialog(c.accept, c.promptText);
       case 'file_upload': {
         const paths = await Promise.all(c.paths.map(p => this.files.input(p)));
         if (c.target || c.ref) await (await this.target(c)).setInputFiles(paths, time);
-        else { if (!this.chooser) throw new BrowserError('NO_FILE_CHOOSER', 'Provide a file input target or open a file chooser first.'); const chooser = this.chooser; this.chooser = undefined; await chooser.setFiles(paths, time); }
+        else await this.takeChooser().setFiles(paths, time);
         return { status: 'executed', count: paths.length };
       }
       case 'downloads': {
-        if (c.action === 'list') return { downloads: this.downloads.map((d, index) => ({ index, filename: d.suggestedFilename(), url: publicURL(d.url()) })) };
-        const d = this.downloads[c.index!]; if (!d) throw new BrowserError('INVALID_ARGUMENT', 'Download index is not present.');
+        const selected = this.scoped(this.downloads), describe = ({ id, pageId, download: d }: typeof selected[number]) => ({ id, pageId, filename: d.suggestedFilename(), url: publicURL(d.url()) });
+        if (c.action === 'list') return { downloads: c.allTabs ? this.downloads.map(describe) : selected.map((d, index) => ({ index, ...describe(d) })) };
+        // Ids stay stable while the bounded list drops old entries; an index addresses the selected tab's current list.
+        const d = (c.id !== undefined ? this.downloads.find(entry => entry.id === c.id) : selected[c.index!])?.download; if (!d) throw new BrowserError('INVALID_ARGUMENT', 'Download id or index is not present.');
         if (c.action === 'cancel') { await d.cancel(); return { status: 'cancelled' }; }
         // Never trust a server-provided suggested filename as a path.
         const path = await this.files.outputPath(c.filename ?? `${randomUUID()}.download`); await d.saveAs(path); return { path };
@@ -107,8 +109,8 @@ export class NativeBrowser extends BrowserEvents {
       }
       case 'pdf': { const data = await page.pdf({ format: c.format, printBackground: c.printBackground }); return { path: await this.files.write(data, c.filename, 'pdf') }; }
       case 'resize': await page.setViewportSize({ width: c.width, height: c.height }); return { width: c.width, height: c.height };
-      case 'console_messages': { const levels = c.level === 'error' ? ['error'] : c.level === 'warning' ? ['error', 'warning', 'warn'] : undefined; const messages = this.messages.filter(m => !levels || levels.includes(m.type)); if (c.clear) this.messages.length = 0; return { messages }; }
-      case 'network_requests': { const requests = [...this.requests]; if (c.clear) this.requests.length = 0; return { requests }; }
+      case 'console_messages': { const levels = c.level === 'error' ? ['error'] : c.level === 'warning' ? ['error', 'warning', 'warn'] : undefined; return { messages: this.scoped(this.messages, c.allTabs, c.clear).filter(m => !levels || levels.includes(m.type)) }; }
+      case 'network_requests': return { requests: this.scoped(this.requests, c.allTabs, c.clear) };
       case 'evaluate': {
         if (!this.options.allowEvaluate) throw new BrowserError('CAPABILITY_DISABLED', 'Page evaluation requires allowEvaluate / --allow-evaluate.');
         if (c.target || c.ref) throw new BrowserError('INVALID_ARGUMENT', 'Evaluation accepts a page function. Use a selector inside that function, or the SDK Page for element callbacks.');

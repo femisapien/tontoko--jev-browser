@@ -12,6 +12,7 @@
 - Moved `dom-accessibility-api` to development dependencies because it ships only inside the DOM bundle, and stopped packing the unused unbundled `dist/dom.js`.
 - A wizard run that stops before its first verified save now returns a `continuation` when earlier steps carried applied inputs, so `resume()` can add a missing value or finish after a step budget instead of restarting from a view whose fields are already hidden. Resume still requires the unchanged paused view (`CONTINUATION_CONTEXT_CHANGED` otherwise) and final result verification.
 - A borrowed Page keeps Playwright's default dialog dismissal outside Jev operations. The caller's own `page.click()` on a button that opens `confirm()` no longer hangs, and later Jev operations no longer fail with `DIALOG_PENDING`. Jev still holds dialogs that open during its operations. Added `captureDialogs: true` to also hold dialogs between operations; `JevBrowser.launch()`, the CLI and MCP keep that behavior by default.
+- `console_messages`, `network_requests` and `downloads` `list` report the selected tab unless `allTabs: true` is passed, and their entries carry a `pageId` that matches `tabs` results. Downloads have stable `id`s for `save` and `cancel`, and an `index` addresses the selected tab's list. `file_upload` without a target uses only a chooser opened on the selected tab, and a tab's pending chooser is dropped when it navigates.
 
 ## 0.11.0
 

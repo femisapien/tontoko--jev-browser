@@ -78,6 +78,14 @@ actions, and Jev still returns a pending `dialog` for dialogs that open while
 one of its operations runs. Pass `captureDialogs: true` to keep the previous
 behavior. `JevBrowser.launch()`, the CLI and the MCP server are unchanged.
 
+`console_messages`, `network_requests` and `downloads` `list` now report the
+selected tab. Add `allTabs: true` where a multi-tab caller read every tab. Save
+or cancel downloads by the new stable `id`; an `index` now addresses the
+selected tab's list. `file_upload` without a target uses only a chooser opened
+on the selected tab, and fails with `NO_FILE_CHOOSER` after that tab navigates.
+Single-tab sessions see the same entries as before, with added `pageId` and
+download `id` fields.
+
 ## Removing the Pi adapter (next minor release)
 
 The `@tontoko/jev-browser/pi` export, bundled Pi adapter and its dedicated launch
