@@ -151,7 +151,7 @@ After installing the tarball, configure your MCP client:
 }
 ```
 
-The environment entry is unnecessary for native operations. Prefer your client's secret store over putting real keys into committed JSON. Browser launch is lazy: tool discovery does not start a browser. The server accepts the CLI launch flags, for example `"args": [".../mcp-stdio.js", "--viewport", "390x844", "--options-file", "/absolute/path/device.json"]`.
+The environment entry is unnecessary for native operations. Prefer your client's secret store over putting real keys into committed JSON. Browser launch is lazy: tool discovery does not start a browser. The server accepts the CLI launch flags, for example `"args": [".../mcp-stdio.js", "--viewport", "390x844", "--options-file", "/absolute/path/device.json"]`. If a launch fails or the browser disconnects, the next tool call starts a new browser; no call is retried automatically. In `--screen-only` mode a failed startup or a lost browser is final, as `browser_close` is.
 
 Tool calls to one server run one at a time in arrival order, so parallel calls wait instead of returning `BUSY`. A waiting call ends when the client cancels it, and an explicit `timeoutMs` argument includes the wait. `browser_close` is not queued, so it can stop a long-running call.
 

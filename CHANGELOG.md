@@ -29,6 +29,7 @@
 - The screen journal starts with a `header` row recording the jev-browser, Playwright and browser versions, the viewport and redacted launch options. Each journaled frame adds `sha256`, `width` and `height`. Existing fields are unchanged.
 - Added `--viewport WxH`, `--reduced-motion`, `--color-scheme` and `--locale` to the CLI and MCP server, plus `--options-file FILE` for JSON launch and context options (`launchOptions`, `contextOptions`, `storageState`, profile and endpoint fields). Explicit flags win over the file, and invalid fields are reported by name.
 - The MCP server runs tool calls one at a time in arrival order, so parallel calls wait instead of returning `BUSY`. Cancellation and an explicit `timeoutMs` include the wait; `browser_close` is not queued.
+- A failed lazy MCP launch is no longer cached, and a crashed or disconnected browser is replaced on the next tool call instead of failing every later call. Screen-only sessions still end after a failed startup or a lost browser.
 
 ## 0.11.0
 
