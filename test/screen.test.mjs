@@ -95,6 +95,14 @@ test('look waits for a pending main-frame navigation and observes the new docume
  await core.screen({action:'click',x:60,y:40,observationId:seen.observationId});
  assert.equal(await page.locator('button').textContent(),'Clicked');
 });
+test('navigations that keep interrupting the retake return STALE_SCREEN, not a capture failure',async t=>{
+ const {core,page}=await fixture(t);
+ await page.setContent('<button style="position:absolute;left:20px;top:20px;width:150px;height:40px" onclick="this.textContent=\'Clicked\';let i=0;setInterval(()=>history.replaceState(null,\'\',\'#s\'+i++),5)">Start</button>');
+ const seen=await core.screen({action:'look'});
+ await assert.rejects(core.screen({action:'click',x:60,y:40,observationId:seen.observationId}),error=>{assert.equal(error.code,'STALE_SCREEN');return true;});
+ assert.equal(await page.locator('button').textContent(),'Clicked');
+ for(let i=0;i<5;i++)await assert.rejects(core.screen({action:'look'}),error=>{assert.equal(error.code,'STALE_SCREEN');return true;});
+});
 test('failed captures report a reason, and history actions recover without an observationId only then',async t=>{
  const {core,page}=await fixture(t);let fontRequested;const font=new Promise(resolve=>{fontRequested=resolve;});
  const s=await site(t,(req,res)=>{if(req.url==='/held.woff2'){fontRequested();return;}res.setHeader('content-type','text/html');res.end(button('Ready'));});

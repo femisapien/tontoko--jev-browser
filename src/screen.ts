@@ -188,6 +188,11 @@ export class ScreenController {
       if (this.files) for (const [i,png] of images.entries()) frames[i]!.path=await this.files.write(png,'screen-'+id+(attempt?'-retake':'')+'-'+i+'.png','png');
       if (changed()) throw new BrowserError('STALE_SCREEN','The Page changed during capture. Look again before any input.');
       return {frames,evidence,viewport:viewport!,geometry:geometry!};
+    } catch (error) {
+      // An interrupted capture is the same stale page as a navigation seen after it, whichever step the navigation reached.
+      if (interrupt.signal.aborted && !(error instanceof BrowserError) && !operation().signal.aborted && !page.isClosed())
+        throw new BrowserError('STALE_SCREEN','The Page changed during capture. Look again before any input.');
+      throw error;
     } finally { if (tracking.interrupt === interrupt) tracking.interrupt = undefined; }
   }
   private failure(error: unknown, generation: number | undefined, signal: AbortSignal | undefined): ScreenFailureReason {
