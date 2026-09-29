@@ -1,5 +1,6 @@
 import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {mkdtemp,readFile,readdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -217,4 +218,33 @@ test('screen emits timestamped transient frames and writes evidence without dupl
  const text=await readFile(join(outputDir,logs[0]),'utf8');assert.equal(text.includes('PRIVATE_TYPED_VALUE'),false);assert.equal(text.includes('HIDDEN_'),false);
  const rows=text.trim().split('\n').map(JSON.parse);assert.ok(rows.some(row=>row.action.kind==='type'&&row.input.textLength===19));
  assert.ok(rows.some(row=>row.action.outcome==='denied'));
+});
+test('the screen journal records its environment and verifiable frame digests',async t=>{
+ const outputDir=await mkdtemp(join(root,'journal-'));const {core}=await fixture(t,{outputDir});
+ const r=await core.screen({action:'look',capture:{frames:2,intervalMs:20}});
+ const [log,...others]=(await readdir(outputDir)).filter(n=>n.endsWith('.jsonl'));assert.equal(others.length,0);
+ const [header,row]=(await readFile(join(outputDir,log),'utf8')).trim().split('\n').map(JSON.parse);
+ const pkg=JSON.parse(await readFile(new URL('../package.json',import.meta.url),'utf8'));
+ assert.equal(header.action.kind,'header');assert.deepEqual(header.frames,[]);
+ assert.equal(header.header.jevBrowser,pkg.version);assert.match(header.header.playwright,/^\d+\.\d+\.\d+/);
+ assert.equal(header.header.browser.name,process.env.JEV_BROWSER??'chromium');assert.ok(header.header.browser.version);
+ assert.deepEqual(header.header.viewport,{width:420,height:320});assert.equal(header.header.launch,undefined);
+ assert.equal(row.frames.length,2);
+ for(const [i,frame] of row.frames.entries()){
+  const png=await readFile(frame.path);assert.ok(png.equals(Buffer.from(r.frames[i].data,'base64')));
+  assert.equal(frame.sha256,createHash('sha256').update(png).digest('hex'));assert.deepEqual([frame.width,frame.height],[420,320]);
+ }
+ assert.equal('sha256' in r.frames[0],false);
+});
+test('journal launch evidence keeps display settings and redacts credentials, headers and paths',async t=>{
+ const outputDir=await mkdtemp(join(root,'launch-'));
+ const core=await JevBrowser.launch({outputDir,launchOptions:{env:{...process.env,PRIVATE_ENV:'PRIVATE_ENV_VALUE'}},storageState:{cookies:[],origins:[]},
+  contextOptions:{viewport:{width:360,height:240},locale:'en-US',httpCredentials:{username:'user',password:'PRIVATE_PASSWORD'},extraHTTPHeaders:{authorization:'PRIVATE_TOKEN'}}});
+ t.after(()=>core.close());
+ await core.screen({action:'look'});
+ const log=(await readdir(outputDir)).find(n=>n.endsWith('.jsonl'));const text=await readFile(join(outputDir,log),'utf8');
+ assert.equal(text.includes('PRIVATE_'),false);
+ const {launch}=JSON.parse(text.split('\n')[0]).header;
+ assert.deepEqual(launch.contextOptions,{viewport:{width:360,height:240},locale:'en-US',httpCredentials:'[redacted]',extraHTTPHeaders:'[redacted]'});
+ assert.deepEqual(launch.launchOptions,{env:'[redacted]'});assert.equal(launch.storageState,'[redacted]');
 });

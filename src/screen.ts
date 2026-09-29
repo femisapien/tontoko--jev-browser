@@ -1,11 +1,13 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { appendFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Frame, Page, Request } from 'playwright';
 import { z } from 'zod';
 import { BrowserError } from './errors.js';
 import { FileAccess } from './paths.js';
-import type { OperationContext } from './types.js';
+import type { BrowserLaunchOptions, OperationContext } from './types.js';
+import { version } from './version.js';
 
 const required = (message: string) => ({ error: (issue: { input?: unknown }) => issue.input === undefined ? message : undefined });
 const capture = z.object({ frames: z.number().int().min(1).max(10), intervalMs: z.number().int().min(20).max(1000) }).strict().optional();
@@ -53,10 +55,24 @@ export type ScreenFailureReason = 'timeout' | 'cancelled' | 'navigation' | 'page
 type ViewportGeometry = { width: number; height: number; scale: number; offsetX: number; offsetY: number; scrollX: number; scrollY: number };
 type Observation = { id: string; page: Page; generation: number; viewport: ScreenResult['viewport']; configured: ReturnType<Page['viewportSize']>; geometry: ViewportGeometry };
 type Tracking = { page: Page; generation: number; navigations: Set<Request>; waiters: Set<() => void>; interrupt?: AbortController; popup?: Page; fileChooser?: boolean; detach: () => void };
-type Capture = { frames: ScreenFrame[]; viewport: ScreenResult['viewport']; geometry: ViewportGeometry };
+type FrameEvidence = { sha256: string; width: number; height: number };
+type Capture = { frames: ScreenFrame[]; evidence: FrameEvidence[]; viewport: ScreenResult['viewport']; geometry: ViewportGeometry };
 type EvidenceAction = Omit<ScreenResult['action'],'kind'> & { kind: string };
 const actions = new Set(screenSchema.options.map(option => option.shape.action.value));
 const settleMs = 5_000;
+const playwrightVersion = (createRequire(import.meta.url)('playwright/package.json') as { version: string }).version;
+// Journal headers keep plain display settings; credentials, headers, paths, endpoints and other values become markers.
+const plainLaunch = new Set(['headless','channel','slowMo','chromiumSandbox','devtools']);
+const plainContext = new Set(['viewport','screen','deviceScaleFactor','isMobile','hasTouch','locale','timezoneId','colorScheme','reducedMotion','forcedColors','contrast','javaScriptEnabled','bypassCSP','ignoreHTTPSErrors','offline','acceptDownloads','serviceWorkers','userAgent','permissions']);
+const redact = (options: object | undefined, plain: Set<string>) => options &&
+  Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined).map(([name, value]) => [name, plain.has(name) ? value : '[redacted]']));
+function launchEvidence(options: Partial<BrowserLaunchOptions> = {}): Record<string, unknown> | undefined {
+  const { browser, headless, launchOptions, contextOptions, storageState, userDataDir, cdpEndpoint, wsEndpoint } = options;
+  const evidence = Object.entries({ browser, headless, launchOptions: redact(launchOptions, plainLaunch), contextOptions: redact(contextOptions, plainContext),
+    ...Object.fromEntries(Object.entries({ storageState, userDataDir, cdpEndpoint, wsEndpoint }).filter(([, value]) => value !== undefined).map(([name]) => [name, '[redacted]'])) })
+    .filter(([, value]) => value !== undefined);
+  return evidence.length ? Object.fromEntries(evidence) : undefined;
+}
 const dimensionsEqual = (a: ReturnType<Page['viewportSize']>, b: ReturnType<Page['viewportSize']>) =>
   a === null || b === null ? a === b : a.width === b.width && a.height === b.height;
 const imageSize = (png: Buffer) => ({ width: png.readUInt32BE(16), height: png.readUInt32BE(20) });
@@ -100,7 +116,7 @@ export class ScreenController {
   private tracking?: Tracking;
   private readonly files?: FileAccess;
   private journal?: Promise<string>;
-  constructor(private readonly page: () => Page, outputDir?: string, private readonly dialogPending?: () => boolean) {
+  constructor(private readonly page: () => Page, outputDir?: string, private readonly dialogPending?: () => boolean, private readonly launch?: Partial<BrowserLaunchOptions>) {
     if (outputDir) this.files = new FileAccess([], outputDir);
   }
   private track(page: Page): Tracking {
@@ -147,7 +163,7 @@ export class ScreenController {
     // A main-frame navigation interrupts the capture instead of leaving it waiting on a replaced document.
     const interrupt = tracking.interrupt = new AbortController();
     try {
-      const count = request.capture?.frames ?? 1, interval = request.capture?.intervalMs ?? 20, frames: ScreenFrame[] = [], images: Buffer[] = [];
+      const count = request.capture?.frames ?? 1, interval = request.capture?.intervalMs ?? 20, frames: ScreenFrame[] = [], images: Buffer[] = [], evidence: FrameEvidence[] = [];
       let viewport: ScreenResult['viewport'] | undefined, geometry: ViewportGeometry | undefined;
       const changed = () => this.page() !== page || generation !== tracking.generation;
       for (let i=0;i<count;i++) {
@@ -163,14 +179,14 @@ export class ScreenController {
         const size=imageSize(png);
         if (changed() || viewport && !dimensionsEqual(viewport,size))
           throw new BrowserError('STALE_SCREEN','The Page or viewport changed during capture. Look again before any input.');
-        viewport=size;images.push(png);
+        viewport=size;images.push(png);evidence.push({sha256:createHash('sha256').update(png).digest('hex'),...size});
         frames.push({data:png.toString('base64'),mimeType:'image/png',capturedAt,elapsedMs});
       }
       // A navigation that started during the first capture would replace these images; settle and retake instead.
       if (!attempt && tracking.navigations.size) return undefined;
       if (this.files) for (const [i,png] of images.entries()) frames[i]!.path=await this.files.write(png,'screen-'+id+(attempt?'-retake':'')+'-'+i+'.png','png');
       if (changed()) throw new BrowserError('STALE_SCREEN','The Page changed during capture. Look again before any input.');
-      return {frames,viewport:viewport!,geometry:geometry!};
+      return {frames,evidence,viewport:viewport!,geometry:geometry!};
     } finally { if (tracking.interrupt === interrupt) tracking.interrupt = undefined; }
   }
   private failure(error: unknown, generation: number | undefined, signal: AbortSignal | undefined): ScreenFailureReason {
@@ -181,13 +197,22 @@ export class ScreenController {
     if (signal?.aborted) return (signal.reason as Error | undefined)?.name === 'TimeoutError' ? 'timeout' : 'cancelled';
     return error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'unknown';
   }
-  private async record(action: EvidenceAction, input: object, frames: ScreenFrame[], observationId?: string): Promise<void> {
+  private async record(action: EvidenceAction, input: object, frames: ScreenFrame[], observationId?: string, evidence: FrameEvidence[] = []): Promise<void> {
     if (!this.files) return;
-    this.journal ??= this.files.write('', 'screen-'+randomUUID()+'.jsonl', 'jsonl');
+    this.journal ??= this.files.write(this.header(), 'screen-'+randomUUID()+'.jsonl', 'jsonl');
     await appendFile(await this.journal, JSON.stringify({
       action, input, ...(observationId ? { observationId } : {}),
-      frames: frames.map(({ data, ...frame }) => frame),
+      frames: frames.map(({ data, ...frame }, i) => ({ ...frame, ...evidence[i] })),
     })+'\n', { encoding: 'utf8', mode: 0o600 });
+  }
+  /** The first journal row keeps the operation-row shape and adds environment evidence. */
+  private header(): string {
+    const page = this.page(), browser = page.context().browser(), launch = launchEvidence(this.launch);
+    return JSON.stringify({
+      action: { id: randomUUID(), kind: 'header', startedAt: new Date().toISOString(), durationMs: 0, outcome: 'observed' }, input: {}, frames: [],
+      header: { jevBrowser: version, playwright: playwrightVersion, ...(browser ? { browser: { name: browser.browserType().name(), version: browser.version() } } : {}),
+        viewport: page.viewportSize(), ...(launch ? { launch } : {}) },
+    })+'\n';
   }
   async deny(command: string): Promise<void> {
     const startedAt = new Date().toISOString();
@@ -290,7 +315,7 @@ export class ScreenController {
       const observationId=randomUUID();
       this.observation={id:observationId,page,generation,viewport:captured.viewport,configured:page.viewportSize(),geometry:captured.geometry};
       action.outcome=effectStarted?'executed':'observed';action.durationMs=performance.now()-started;
-      await this.record(action,input,captured.frames,observationId);
+      await this.record(action,input,captured.frames,observationId,captured.evidence);
       return {observationId,viewport:captured.viewport,navigated:generation!==baseline,frames:captured.frames,action:action as ScreenResult['action']};
     } catch (error) {
       action.outcome=effectStarted?'unknown':error instanceof BrowserError && ['INVALID_ARGUMENT','ACTION_DENIED','STALE_SCREEN','SCREEN_COORDINATES'].includes(error.code)?'denied':'failed';
