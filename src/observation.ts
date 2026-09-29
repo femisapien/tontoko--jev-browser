@@ -20,7 +20,7 @@ export interface Captured {
   changeKeys: Record<number, string>;
   dispose(): Promise<void>;
 }
-interface CaptureOptions { signal?: AbortSignal; semanticRefs?: boolean; scope?: string; recordsScope?: string; maxElements: number; maxTexts: number; selection?: {frame:Frame;roots:ElementHandle<Element>[]} }
+interface CaptureOptions { signal?: AbortSignal; semanticRefs?: boolean; scope?: string; requireScope?: boolean; recordsScope?: string; maxElements: number; maxTexts: number; selection?: {frame:Frame;roots:ElementHandle<Element>[]} }
 // Playwright reports these when a frame is removed, or its document replaced, during an evaluation.
 const detachedFrame = /Frame (?:was|has been) detached/;
 const replacedDocument = (error: unknown) => error instanceof BrowserError ? error.code === 'STALE_SNAPSHOT' : error instanceof Error && /Execution context was destroyed/.test(error.message);
@@ -48,6 +48,7 @@ async function captureOnce(page: Page, options: CaptureOptions): Promise<Capture
     truncated: false, truncatedElements: false, truncatedTexts: false, recordInventoryComplete:true,
     scroll: await page.evaluate(() => ({ y: window.scrollY, maxY: Math.max(0, document.documentElement.scrollHeight - window.innerHeight), height: window.innerHeight })),
   };
+  let scopeFound = false;
   try {
     // Read a frame completely before recording it, so a frame removed mid-read leaves no partial evidence.
     const observeFrame = async (frameIndex: number, frame: Frame) => {
@@ -67,6 +68,7 @@ async function captureOnce(page: Page, options: CaptureOptions): Promise<Capture
       const textNodes = options.semanticRefs ? await result.getProperty('textNodes') : undefined;
       if (textNodes) owned.push(textNodes);
       const textProperties = textNodes ? await textNodes.getProperties() : new Map<string, JSHandle>();
+      scopeFound ||= !!roots?.length;
       changeKeys[frameIndex] = observed.changeKey;
       data.busy ||= observed.busy;
       for (const [index, handle] of properties) {
@@ -103,8 +105,15 @@ async function captureOnce(page: Page, options: CaptureOptions): Promise<Capture
     data.truncated = data.truncatedElements || data.truncatedTexts;
     options.signal?.throwIfAborted();
     if (page.url() !== rawURL) throw new BrowserError('STALE_SNAPSHOT', 'Page navigated while it was being observed. Observe again.', { retryable: true });
+    if (options.requireScope && options.scope && !scopeFound) throw new BrowserError('SCOPE_NOT_FOUND', 'The observation scope matched no element. Check the selector, or wait for that region to appear.');
     return { data, refs, textRefs, rawURL, changeKeys, dispose };
   } catch (error) { await dispose(); throw error; }
+}
+/** An explicit caller scope that matches nothing in any frame is an error, never an empty observation. */
+export async function assertScope(page: Page, scope: string | undefined): Promise<void> {
+  if (!scope) return;
+  for (const frame of page.frames()) if (await frame.locator(`css=${scope}`).count()) return;
+  throw new BrowserError('SCOPE_NOT_FOUND', 'The observation scope matched no element. Check the selector, or wait for that region to appear.');
 }
 /** Execute the shipped shared observation predicate, never caller/model-generated code. */
 export async function waitForFrameProgress(frame: Frame, baseline: string, timeoutMs: number, signal: AbortSignal): Promise<void> {

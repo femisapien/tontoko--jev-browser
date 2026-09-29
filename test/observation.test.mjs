@@ -1,7 +1,9 @@
 import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
 import {z} from 'zod';
+import {Client,InMemoryTransport} from '@modelcontextprotocol/client';
 import {JevBrowser} from '../dist/index.js';
+import {createMcpServer} from '../dist/mcp.js';
 import {capture} from '../dist/observation.js';
 import {verifyReadback,waitForRelevantChange} from '../dist/completion.js';
 import {flattenInputs} from '../dist/bindings.js';
@@ -100,4 +102,39 @@ test('progress waits observe the same shortened long text as observation',async 
   assert.equal(observed.data.texts[0]?.truncated,true);
   await page.locator('#long').evaluate(node=>{node.textContent=node.textContent.replace('Pending','Saved');});
   assert.equal(await waitForRelevantChange(page,observed,250,new AbortController().signal),true);
+});
+
+test('an explicit scope that matches nothing fails with SCOPE_NOT_FOUND before any decision',async t=>{
+  const {core,page}=await content(t,'<main><p id="total">Total 42</p><button>Save</button></main>');
+  const scope='#missing',ref=(await core.snapshot()).elements[0].id;
+  for(const [name,operation] of [
+    ['compare ref',()=>core.compareSemantic({actual:{ref},expected:'Save'},{scope})],
+    ['assert locator',()=>core.assertSemantic({actual:{locator:page.locator('#total')},expected:'Total 42'},{scope})],
+    ['compare description',()=>core.compareSemantic({actual:{description:'Total'},expected:'Total 42'},{scope})],
+    ['snapshot',()=>core.snapshot({scope})],
+    ['observe',()=>core.observe('Click Save',{scope})],
+    ['act',()=>core.act('Click Save',{scope})],
+    ['extract',()=>core.extract('Read the total',z.object({total:z.string()}),{scope})],
+    ['locate',()=>core.locateSemantic('The save button',{scope})],
+  ])await assert.rejects(operation(),{code:'SCOPE_NOT_FOUND'},name);
+});
+test('a scope that matches only inside a child frame is observed there',async t=>{
+  const {core}=await content(t,'<h1>Outside</h1><iframe srcdoc="<section id=inner><p>Inside</p></section>"></iframe>');
+  const snapshot=await core.snapshot({scope:'#inner'});
+  assert.deepEqual(snapshot.texts.map(source=>[source.text,source.frame]),[['Inside',1]]);
+});
+test('run keeps its stop semantics when its scope matches nothing',async t=>{
+  const {core}=await content(t,'<button>Save</button>',engine(()=>'__none__'));
+  const result=await core.run('Click Save',{scope:'#missing',settleTimeoutMs:50});
+  assert.equal(result.status,'stopped');
+});
+test('MCP reports SCOPE_NOT_FOUND for a scope that matches nothing',async t=>{
+  const page=await browser.newPage();await page.setContent('<p>Visible</p>');
+  const core=new JevBrowser({page,engine:forbidden}),server=createMcpServer(core),client=new Client({name:'observation-tests',version:'1'});
+  const [ct,st]=InMemoryTransport.createLinkedPair();
+  t.after(async()=>{await client.close();await server.close();await core.close();await page.close();});
+  await server.connect(st);await client.connect(ct);
+  const result=await client.callTool({name:'browser_snapshot',arguments:{scope:'#missing'}});
+  assert.equal(result.isError,true);
+  assert.equal(JSON.parse(result.content.find(item=>item.type==='text').text).error.code,'SCOPE_NOT_FOUND');
 });
