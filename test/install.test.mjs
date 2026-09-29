@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const cli = new URL('../dist/cli.js', import.meta.url);
-const run = (...args) => spawnSync(process.execPath, [cli.pathname, ...args], { encoding: 'utf8' });
+const run = (...args) => spawnSync(process.execPath, [fileURLToPath(cli), ...args], { encoding: 'utf8' });
 
 test('install --dry-run plans the browser of the bundled Playwright without downloading', () => {
   const result = run('install', 'chromium', '--dry-run');
