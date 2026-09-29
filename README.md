@@ -4,7 +4,7 @@
 
 Jev Browser combines native Playwright operations with [Jev](https://typesafe.ai) decisions over actual page elements. Use it instead of a Playwright MCP/CLI setup for browser automation, and instead of Stagehand for DOM-grounded `act`, `observe`, structured `extract`, and bounded agent workflows.
 
-Native operations and assertions run **without an AI key**. Natural-language operations use the official TypeSafe SDK against hosted Jev by default, or any compatible System One endpoint configured with `baseURL` / `JEV_BASE_URL`. A custom endpoint does not require a Jev API key. The decision backend chooses supplied candidates; it does not generate executable JavaScript or selectors. The project is Apache-2.0 licensed; hosted services and model weights are not included.
+Native operations and assertions run **without an AI key**. Natural-language operations use the official TypeSafe SDK against hosted Jev by default, or any compatible System One endpoint configured with `baseURL` / `JEV_BASE_URL`. A custom endpoint does not require a Jev API key and never receives the hosted one. The decision backend chooses supplied candidates; it does not generate executable JavaScript or selectors. The project is Apache-2.0 licensed; hosted services and model weights are not included.
 
 [日本語](README.ja.md) · [Migration guide](docs/migration.md) · [API](docs/api.md) · [Semantic verification](docs/semantic-verification.md) · [Security](SECURITY.md) · [Verification](docs/verification.md)
 
@@ -112,7 +112,7 @@ npx jev-browser fill 'input[name=email]' 'user@example.invalid' --session work
 npx jev-browser assert --args '{"target":"input[name=email]","property":"value","expected":"user@example.invalid"}' --session work
 ```
 
-For hosted Jev, set `JEV_API_KEY` or `TYPESAFE_API_KEY`. For a compatible local/remote System One endpoint, set only `JEV_BASE_URL` (for example `http://127.0.0.1:8765`); it must implement `POST /v1/systemone` with the same `state/questions -> model/answers/usage` envelope:
+For hosted Jev, set `JEV_API_KEY` or `TYPESAFE_API_KEY`. Those keys are sent only to hosted Jev (`https://api.typesafe.ai`), never to a custom endpoint. For a compatible local/remote System One endpoint, set only `JEV_BASE_URL` (for example `http://127.0.0.1:8765`), plus `JEV_ENDPOINT_API_KEY` (or the SDK `apiKey` option) if that endpoint needs its own key. A key is sent only over HTTPS or to a loopback address; otherwise the AI operation fails with `CONFIG`. Blank key variables count as unset. The endpoint must implement `POST /v1/systemone` with the same `state/questions -> model/answers/usage` envelope:
 
 ```sh
 npx jev-browser act 'Fill the Name field with "Alice Example"' --session work

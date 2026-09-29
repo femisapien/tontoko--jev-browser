@@ -88,3 +88,24 @@ The old `JEV_SCREEN_URL` / `JEV_SCREEN_OPTIONS` adapter variables and Pi-specifi
 launch flags are not settings for the generic MCP server. Map only supported
 options using the ordinary CLI/MCP documentation. The published v0.9.0 archive
 and its historical verification remain unchanged.
+
+## Hosted keys and custom endpoints (next release)
+
+`JEV_API_KEY` and `TYPESAFE_API_KEY` are now sent only to hosted Jev
+(`https://api.typesafe.ai`). Earlier releases also sent them to any custom
+`baseURL` / `JEV_BASE_URL`, so a mistyped or untrusted endpoint received the
+hosted key. A custom endpoint now receives a fixed placeholder unless you
+authenticate it explicitly:
+
+- SDK: pass `apiKey` together with `baseURL`.
+- CLI and MCP: set `JEV_ENDPOINT_API_KEY`.
+
+A proxy that forwards the hosted key needs it the same explicit way, for example
+`JEV_ENDPOINT_API_KEY="$JEV_API_KEY"`. A key is sent only over HTTPS or to a
+loopback host. A key for an `http://` endpoint on another host now fails with
+`CONFIG` instead of travelling in clear text. Keyless custom endpoints,
+including plain HTTP ones, work as before.
+
+The upstream SDK's `TYPESAFE_BASE_URL` no longer redirects this library; use
+`JEV_BASE_URL`. Empty key variables, such as `JEV_API_KEY=` from
+`.env.example`, now count as unset.
