@@ -70,6 +70,14 @@ SDK users can pass `{actual:{locator:page.getByTestId('plan')},expected:'Profess
 
 Mixed model provenance is now reported in `models`; do not require a singular `model` when it is unknown or multiple models participated. Semantic failures now include `error.semantic` expected/results; treat logs as potentially sensitive UI data. Existing `run`, `resume`, native actions and deterministic assertions remain available without a new planner or backend service.
 
+## Borrowed-page dialogs and tab-scoped events (next release)
+
+A core attached to a borrowed Page no longer holds dialogs between its
+operations. Playwright's default dismissal applies to the caller's own Page
+actions, and Jev still returns a pending `dialog` for dialogs that open while
+one of its operations runs. Pass `captureDialogs: true` to keep the previous
+behavior. `JevBrowser.launch()`, the CLI and the MCP server are unchanged.
+
 ## Removing the Pi adapter (next minor release)
 
 The `@tontoko/jev-browser/pi` export, bundled Pi adapter and its dedicated launch

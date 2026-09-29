@@ -12,11 +12,12 @@ export interface NativeHost {
   validateURL(url: string): Promise<string>;
 }
 type ActionOutcome = { status: 'executed' } | { status: 'dialog'; dialog: BrowserDialog };
+interface TrackedPage { holdDialogs(hold: boolean): void; detach(): void }
 /** Mechanical browser operations. The shared core supplies locking, authorization and reference identity. */
 export class BrowserEvents {
   protected readonly files: FileAccess;
   protected readonly context: BrowserContext;
-  protected readonly detach = new Map<Page, () => void>();
+  private readonly tracked = new Map<Page, TrackedPage>();
   protected readonly messages: { type: string; text: string; url: string }[] = [];
   protected readonly requests: { method: string; url: string; resourceType: string }[] = [];
   protected readonly downloads: Download[] = [];
@@ -28,6 +29,7 @@ export class BrowserEvents {
   protected dialogNotice?: () => void;
   protected pendingAction?: Promise<void>;
   protected traceStarted = false;
+  private operating = false;
   protected readonly onPage = (page: Page) => this.attach(page);
 
   constructor(protected readonly host: NativeHost, protected readonly options: BrowserOptions) {
@@ -37,16 +39,29 @@ export class BrowserEvents {
     this.context.on('page', this.onPage);
   }
   private attach(page: Page): void {
-    if (this.detach.has(page)) return;
+    if (this.tracked.has(page)) return;
+    let holding = false;
+    const tracked: TrackedPage = {
+      // A dialog listener disables Playwright's default dismissal, so it exists only while Jev owns dialogs.
+      holdDialogs: hold => { if (hold === holding) return; holding = hold; if (hold) page.on('dialog', onDialog); else page.off('dialog', onDialog); },
+      detach: () => { tracked.holdDialogs(false); page.off('console', onConsole); page.off('pageerror', onError); page.off('request', onRequest); page.off('download', onDownload); page.off('filechooser', onChooser); page.off('close', onClose); },
+    };
     const onConsole = (m: ConsoleMessage) => { this.messages.push({ type: m.type(), text: m.text(), url: publicURL(page.url()) }); if (this.messages.length > 500) this.messages.shift(); };
     const onError = (e: Error) => { this.messages.push({ type: 'error', text: e.message, url: publicURL(page.url()) }); if (this.messages.length > 500) this.messages.shift(); };
     const onRequest = (r: Request) => { this.requests.push({ method: r.method(), url: publicURL(r.url()), resourceType: r.resourceType() }); if (this.requests.length > 1000) this.requests.shift(); };
     const onDownload = (d: Download) => { this.downloads.push(d); if (this.downloads.length > 100) this.downloads.shift(); };
     const onDialog = (d: Dialog) => { this.dialog = d; this.dialogId++; this.dialogPage = page; this.dialogNotice?.(); };
     const onChooser = (c: FileChooser) => { this.chooser = c; };
-    const onClose = () => { this.detach.get(page)?.(); this.detach.delete(page); };
-    page.on('console', onConsole); page.on('pageerror', onError); page.on('request', onRequest); page.on('download', onDownload); page.on('dialog', onDialog); page.on('filechooser', onChooser); page.on('close', onClose);
-    this.detach.set(page, () => { page.off('console', onConsole); page.off('pageerror', onError); page.off('request', onRequest); page.off('download', onDownload); page.off('dialog', onDialog); page.off('filechooser', onChooser); page.off('close', onClose); });
+    const onClose = () => { tracked.detach(); this.tracked.delete(page); };
+    page.on('console', onConsole); page.on('pageerror', onError); page.on('request', onRequest); page.on('download', onDownload); page.on('filechooser', onChooser); page.on('close', onClose);
+    tracked.holdDialogs(this.holdsDialogs());
+    this.tracked.set(page, tracked);
+  }
+  private holdsDialogs(): boolean { return this.options.captureDialogs === true || this.operating; }
+  /** Borrowed Pages keep Playwright's default dialog dismissal outside Jev operations unless captureDialogs is set. */
+  operate(active: boolean): void {
+    this.operating = active;
+    for (const tracked of this.tracked.values()) tracked.holdDialogs(this.holdsDialogs());
   }
   guard(command?: string): void {
     if ((this.dialog || this.pendingAction) && command !== 'handle_dialog') throw new BrowserError('DIALOG_PENDING', 'Answer the pending browser dialog with handle_dialog before another operation.');
@@ -92,7 +107,7 @@ export class BrowserEvents {
     this.context.off('page', this.onPage);
     if (this.dialog) { await this.dialog.dismiss().catch(() => undefined); this.dialog = undefined; }
     await this.pendingAction?.catch(() => undefined); this.pendingAction = undefined;
-    for (const detach of this.detach.values()) detach(); this.detach.clear();
+    for (const tracked of this.tracked.values()) tracked.detach(); this.tracked.clear();
     for (const [pattern, handler] of this.routes) await this.context.unroute(pattern, handler).catch(() => undefined);
     this.routes.clear();
     if (this.traceStarted) await this.context.tracing.stop().catch(() => undefined);

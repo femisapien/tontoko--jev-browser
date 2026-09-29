@@ -12,6 +12,7 @@ Options include:
 - Files: `fileRoots`, `outputDir`. Native uploads/artifacts use these boundaries. Explicit launch/profile paths are independently granted by the caller.
 - Guard callbacks: `allowAction(plan, operation)` for Jev actions, `allowCommand(command, operation)` for native operations. Both require literal `true`. `operation` has `signal` and remaining `timeoutMs`. These callbacks do not restrict direct Page access or create a network sandbox.
 - `allowEvaluate`: enables caller-authored page evaluation and init scripts. Disabled by default. No Node-side evaluation command exists.
+- `captureDialogs`: holds `alert`, `confirm`, `prompt` and `beforeunload` dialogs for `handle_dialog` even when they open between operations. `launch()`, and therefore the CLI and MCP server, defaults to `true`. A borrowed Page defaults to `false`: Jev holds only dialogs that open while one of its operations runs, and Playwright's default dismissal applies to the caller's own Page actions.
 - `screenOnly`: fixes CLI/MCP/shared dispatch to `screen` and `close` for the session lifetime. Direct caller Page access remains trusted. `allowCommand` additionally receives `{command:'screen',request}` for screen operations; existing allowlists still need to permit it explicitly.
 
 Per-operation `signal`, `timeoutMs` and `scope` are available where relevant. The default operation budget is 30 seconds. Cancellation does not roll back completed effects. User-supplied callbacks and custom decision engines must honor the signal and remain bounded.

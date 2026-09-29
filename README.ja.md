@@ -67,7 +67,7 @@ await browser.act('保存ボタンを押す');
 await expect(page.getByText('保存済み', { exact: true })).toBeVisible();
 ```
 
-借りた`Page`はSDKの`close()`で閉じません。既存のPlaywright Test、fixture、locator、アプリ固有のassertionと併用できます。SDKはPlaywright Testを読み込まないため、プロジェクトの`@playwright/test`が同梱のPlaywrightと別のバージョンでも使えます。
+借りた`Page`はSDKの`close()`で閉じません。既存のPlaywright Test、fixture、locator、アプリ固有のassertionと併用できます。SDKはPlaywright Testを読み込まないため、プロジェクトの`@playwright/test`が同梱のPlaywrightと別のバージョンでも使えます。借りた`Page`では、Jevの操作中に開いたダイアログだけを保留して`handle_dialog`へ渡します。それ以外の`page.click()`などで開いたダイアログは、Playwright既定どおり自動で閉じられます。操作の合間に開いたダイアログも保留するには`captureDialogs: true`を指定します。`JevBrowser.launch()`、CLI、MCPは既定で保留します。
 
 ### 意味的な検索とconfidence付きassertion
 

@@ -136,6 +136,8 @@ export interface BrowserOptions extends JevOptions {
   fileRoots?: string[];
   outputDir?: string;
   allowEvaluate?: boolean;
+  /** Hold dialogs for handle_dialog between operations too. launch() defaults to true; a borrowed Page keeps Playwright's auto-dismissal outside Jev operations. */
+  captureDialogs?: boolean;
   /** Restricts CLI/MCP/shared dispatch; direct caller Page access is still trusted. */
   screenOnly?: boolean;
   allowCommand?: (command: BrowserCommand, operation: OperationContext) => boolean | Promise<boolean>;
