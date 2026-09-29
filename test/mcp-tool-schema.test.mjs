@@ -3,11 +3,13 @@ import test from 'node:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
 import { parseCommand } from '../dist/commands.js';
+import { JevBrowser } from '../dist/index.js';
 import { createMcpServer } from '../dist/mcp.js';
+import { fixtureBrowser } from './helpers.mjs';
 
-async function connect(t) {
+async function connect(t, core) {
   const state = { starts: 0 };
-  const server = createMcpServer(async () => { state.starts++; throw new Error('Unexpected browser startup'); });
+  const server = createMcpServer(core ?? (async () => { state.starts++; throw new Error('Unexpected browser startup'); }));
   const client = new Client({ name: 'mcp-tool-schema', version: '1' });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   t.after(async () => { await client.close(); await server.close(); });
@@ -55,4 +57,20 @@ test('MCP integer fields stay within the timer range and oversized values fail b
   assert.equal(result.isError, true);
   assert.match(result.content.find(item => item.type === 'text').text, /timeoutMs/);
   assert.equal(state.starts, 0);
+});
+
+test('browser_select_option describes the value-or-label matching Playwright performs', async t => {
+  const browser = await fixtureBrowser(); const context = await browser.newContext(); const page = await context.newPage(); const core = new JevBrowser({ page });
+  t.after(async () => { await core.close(); await context.close(); await browser.close(); });
+  await page.setContent('<select id=q><option value="2">1</option><option value="1">2</option><option value="b">Banana</option></select>');
+  const { client, tools } = await connect(t, core);
+  const { properties } = tools.find(tool => tool.name === 'browser_select_option').inputSchema;
+  for (const name of ['values', 'by']) assert.match(properties[name].description, /value or label/);
+  assert.match(properties.by.description, /label matches labels only/);
+  const selected = async args => { const result = await client.callTool({ name: 'browser_select_option', arguments: { target: '#q', ...args } }); assert.notEqual(result.isError, true); return page.$eval('#q', select => select.value); };
+  // Raw strings match the first option whose value or label is equal; only by label narrows the match.
+  assert.equal(await selected({ values: ['1'], by: 'value' }), '2');
+  assert.equal(await selected({ values: ['Banana'] }), 'b');
+  assert.equal(await selected({ values: ['1'], by: 'label' }), '2');
+  assert.equal(await selected({ values: ['2'], by: 'label' }), '1');
 });
