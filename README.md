@@ -13,8 +13,8 @@ Native operations and assertions run **without an AI key**. Natural-language ope
 Node.js **22.15 or newer**. Download the package from [GitHub Releases](https://github.com/tontoko/jev-browser/releases), then install it into your project:
 
 ```sh
-npm install --save-dev ./tontoko-jev-browser-0.9.0.tgz
-npx playwright install chromium
+npm install --save-dev ./tontoko-jev-browser-0.10.0.tgz
+npx jev-browser install chromium
 ```
 
 Or build from source:
@@ -27,6 +27,8 @@ npx playwright install chromium
 npm run build
 node dist/cli.js --help
 ```
+
+`jev-browser install` installs the browser build required by the Playwright version this package bundles. Use it instead of the project's own `npx playwright install` when your project pins a different Playwright version; otherwise the two builds can differ and the wrong one is missing at run time.
 
 The release tarball includes compiled JavaScript, declarations, the DOM bundle, documentation, and examples. There is no postinstall browser download and no requirement for a global browser daemon. The package is distributed on GitHub Releases; a registry publication is not implied.
 
