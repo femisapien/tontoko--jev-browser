@@ -56,6 +56,8 @@ export type ScreenFailureReason = 'timeout' | 'cancelled' | 'navigation' | 'page
 type ViewportGeometry = { width: number; height: number; scale: number; offsetX: number; offsetY: number; scrollX: number; scrollY: number };
 type Observation = { id: string; page: Page; generation: number; viewport: ScreenResult['viewport']; configured: ReturnType<Page['viewportSize']>; geometry: ViewportGeometry };
 type Tracking = { page: Page; generation: number; navigations: Set<Request>; waiters: Set<() => void>; interrupt?: AbortController; popup?: Page; fileChooser?: boolean; crashed?: boolean; detach: () => void };
+/** A native dialog opened during a capture; the failure path reports it as SCREEN_FAILED reason dialog. */
+class CaptureDialog extends Error { override name = 'CaptureDialog'; }
 type FrameEvidence = { sha256: string; width: number; height: number };
 type Capture = { frames: ScreenFrame[]; evidence: FrameEvidence[]; viewport: ScreenResult['viewport']; geometry: ViewportGeometry };
 type EvidenceAction = Omit<ScreenResult['action'],'kind'> & { kind: string };
@@ -167,8 +169,10 @@ export class ScreenController {
     private readonly startedAt: string = new Date().toISOString(), private readonly dismissDialogs?: () => Promise<boolean>) {
     if (outputDir) this.files = new FileAccess([], outputDir);
   }
-  /** Throws a capability-limit error for a popup tab, file chooser or (when recovering) held dialog. Recovery reports each once. */
-  private async unsupported(tracking: Tracking): Promise<void> {
+  /** Throws a capability-limit error for a popup tab, file chooser or (when recovering) held dialog. Recovery reports each once.
+   * A dialog that opens while a capture runs is left for the failure path, which reports it once as SCREEN_FAILED reason dialog, then dismisses it. */
+  private async unsupported(tracking: Tracking, capturing = false): Promise<void> {
+    if (capturing && this.dismissDialogs && this.dialogPending?.()) throw new CaptureDialog();
     if (this.dismissDialogs && await this.dismissDialogs())
       throw new BrowserError('SCREEN_DIALOG_UNSUPPORTED', dialogMessage);
     const popup = tracking.popup;
@@ -248,13 +252,15 @@ export class ScreenController {
       for (let i=0;i<count;i++) {
         const op=operation(), signal=AbortSignal.any([op.signal,interrupt.signal]);
         if (i) await delay(interval,undefined,{signal});
-        signal.throwIfAborted();await this.unsupported(tracking);
+        signal.throwIfAborted();await this.unsupported(tracking,true);
         const png=await screenshot(page,operation,signal);
         const capturedAt=new Date().toISOString(), elapsedMs=performance.now()-started;
+        // A dialog blocks page evaluation, so it is noticed before the geometry is read.
+        await this.unsupported(tracking,true);
         // Frames intentionally span animation and scrolling. Bind freshness to the last frame,
         // before optional file writes, without requiring constant scroll across the sequence.
         if (i === count-1) geometry=await viewportGeometry(page,{signal,timeoutMs:operation().timeoutMs});
-        await this.unsupported(tracking);
+        await this.unsupported(tracking,true);
         const size=imageSize(png);
         if (changed() || viewport && !dimensionsEqual(viewport,size))
           throw new BrowserError('STALE_SCREEN','The Page or viewport changed during capture. Look again before any input.');
@@ -268,7 +274,7 @@ export class ScreenController {
       return {frames,evidence,viewport:viewport!,geometry:geometry!};
     } catch (error) {
       // An interrupted capture is the same stale page as a navigation seen after it, whichever step the navigation reached.
-      if (interrupt.signal.aborted && !(error instanceof BrowserError) && !operation().signal.aborted && !page.isClosed())
+      if (interrupt.signal.aborted && !(error instanceof BrowserError) && !(error instanceof CaptureDialog) && !operation().signal.aborted && !page.isClosed())
         throw new BrowserError('STALE_SCREEN','The Page changed during capture. Look again before any input.');
       throw error;
     } finally { if (tracking.interrupt === interrupt) tracking.interrupt = undefined; }
@@ -277,7 +283,7 @@ export class ScreenController {
     const tracking = this.tracking;
     if (tracking?.page.isClosed()) return 'page-closed';
     if (tracking?.crashed) return 'page-crashed';
-    if (this.dialogPending?.()) return 'dialog';
+    if (error instanceof CaptureDialog || this.dialogPending?.()) return 'dialog';
     if (tracking && generation !== undefined && tracking.generation !== generation) return 'navigation';
     if (signal?.aborted) return (signal.reason as Error | undefined)?.name === 'TimeoutError' ? 'timeout' : 'cancelled';
     return error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'unknown';
@@ -394,8 +400,10 @@ export class ScreenController {
         generation = tracking.generation;
         try { captured = await this.capture(page,tracking,generation,request,operation,started,action.id,attempt); }
         catch (error) {
-          // Only the capture is retaken, once; input is never replayed.
-          if (attempt || signal.aborted || page.isClosed() || this.page() !== page || error instanceof BrowserError && error.code !== 'STALE_SCREEN') throw error;
+          // Only the capture is retaken, once; input is never replayed. A dialog or an exhausted capture timeout is the
+          // failure itself: retaking would report the same dialog in another shape, depending on which timer fired first.
+          if (attempt || signal.aborted || page.isClosed() || this.page() !== page || this.dialogPending?.() || error instanceof CaptureDialog ||
+            error instanceof Error && error.name === 'TimeoutError' || error instanceof BrowserError && error.code !== 'STALE_SCREEN') throw error;
         }
       }
       signal.throwIfAborted();

@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Opt-in image understanding: `screenDecide` (CLI `screen_decide`, MCP `browser_screen_decide`, also in screen-only sessions) captures the viewport once, has an OpenAI-compatible Chat Completions endpoint you configure (`vision` option, or `--vision-base-url` and `--vision-model` with `JEV_VISION_API_KEY`) describe it, and answers your questions with Jev from that text; `decideFromScreen` and `ChatCompletionsImageUnderstanding` are exported for your own captures. Screenshots go only to that HTTPS or loopback endpoint, only when called, and no Jev key is sent to it.
+- A native dialog that opens during a `screen` capture is now always reported once as `SCREEN_FAILED` (or `SCREEN_INTERRUPTED` after an input) with reason `dialog`; in screen-only sessions it could instead surface as `SCREEN_DIALOG_UNSUPPORTED` after a retaken capture, depending on which timeout fired first.
 
 ## 0.13.0
 
