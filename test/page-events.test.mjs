@@ -62,6 +62,20 @@ test('console and network entries are scoped to the selected tab unless allTabs 
  await core.native({command:'console_messages',clear:true});
  assert.deepEqual(logged((await core.native({command:'console_messages',allTabs:true})).messages,'from tab').map(m=>m.text),['from tab A']);
 });
+test('two cores on one Page each record that Page\'s telemetry in their own buffer',async t=>{
+ const {core:first,page}=await fixture(t,'<button onclick="console.log(\'clicked by second core\')">Log</button>');
+ await page.evaluate(()=>console.log('before second core'));
+ const second=new JevBrowser({page});t.after(()=>second.close());
+ const ours=async core=>(await core.native({command:'console_messages'})).messages.map(m=>m.text).filter(text=>['before second core','clicked by second core','from the page'].includes(text));
+ await second.native({command:'click',target:'button'});await page.evaluate(()=>console.log('from the page'));
+ // Events belong to the Page, not to the core that caused them; a core records only what happened after it attached.
+ assert.deepEqual(await ours(first),['before second core','clicked by second core','from the page']);
+ assert.deepEqual(await ours(second),['clicked by second core','from the page']);
+ // Buffers and clear are per core: clearing one core is a cursor for that core only.
+ await first.native({command:'console_messages',clear:true});
+ assert.equal(logged((await first.native({command:'console_messages'})).messages,'from the page').length,0);
+ assert.equal(logged((await second.native({command:'console_messages'})).messages,'from the page').length,1);
+});
 test('file_upload without a target uses only a chooser from the selected tab and document',async t=>{
  // captureDialogs holds choosers the caller opens between Jev operations.
  const {core,page}=await fixture(t,undefined,{captureDialogs:true});const path=join(root,'chooser.txt');await writeFile(path,'chosen');
