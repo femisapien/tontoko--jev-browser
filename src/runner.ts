@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { applyCombobox } from './widgets.js';
 import {resolveInputSelections,selectionTarget} from './selection.js';
-import type { Page } from 'playwright';
+import type { Page } from 'playwright-core';
 import type { DecisionEngine, DecisionRequest, DecisionResult } from './decision.js';
 import { BrowserError } from './errors.js';
 import { actionCandidates, actionDescription, modelElementId, inputBindings, modelElement, resolveSelectChoice } from './actions.js';

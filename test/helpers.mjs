@@ -1,4 +1,4 @@
-import { chromium, firefox, webkit } from 'playwright';
+import { chromium, firefox, webkit } from 'playwright-core';
 import { createServer } from 'node:http';
 
 export function engine(pick) {

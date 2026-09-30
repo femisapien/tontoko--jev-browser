@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Breaking: `playwright-core` (`>=1.62.0 <2`) and `zod` (`^4.2.0`) are now peer dependencies instead of bundled `playwright` and `zod` copies, so the package shares your project's Playwright and Zod; an older `playwright-core` fails with `CONFIG`. Yarn Berry users must add them explicitly. See `docs/migration.md`.
 - Row, list, form and record context strings sent to the decision endpoint no longer include text typed into `contenteditable` editors, `<textarea>`/`<input>` controls or native `<select>` option labels; element names and labels are kept.
 
 ## 0.12.2

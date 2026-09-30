@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, symlink, rm, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { chromium } from 'playwright';
+import { chromium } from 'playwright-core';
 import { JevBrowser } from '../dist/index.js';
 import { fixtureBrowser, select } from './helpers.mjs';
 let browser;

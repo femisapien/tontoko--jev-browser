@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const cli = new URL('../dist/cli.js', import.meta.url);
 const run = (...args) => spawnSync(process.execPath, [fileURLToPath(cli), ...args], { encoding: 'utf8' });
 
-test('install --dry-run plans the browser of the bundled Playwright without downloading', () => {
+test('install --dry-run plans the browser of the resolved playwright-core without downloading', () => {
   const result = run('install', 'chromium', '--dry-run');
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stderr, /Install location:/);

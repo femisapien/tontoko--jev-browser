@@ -58,9 +58,11 @@
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",
-    "@typesafe-ai/sdk": "0.6.0",
-    "playwright": "1.63.0",
-    "zod": "4.6.5"
+    "@typesafe-ai/sdk": "0.6.0"
+  },
+  "peerDependencies": {
+    "playwright-core": ">=1.62.0 <2",
+    "zod": "^4.2.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
@@ -69,7 +71,9 @@
     "@types/node": "22.20.4",
     "dom-accessibility-api": "0.7.1",
     "esbuild": "0.28.2",
-    "typescript": "7.0.2"
+    "playwright-core": "1.63.0",
+    "typescript": "7.0.2",
+    "zod": "4.6.5"
   },
   "repository": {
     "type": "git",

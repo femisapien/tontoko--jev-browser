@@ -1,10 +1,11 @@
 import { runGoal, type PendingCommitState, type RunSeed, type ResolvedInput } from './runner.js';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { chromium, firefox, webkit, type Page } from 'playwright';
+import { chromium, firefox, webkit, type Page } from 'playwright-core';
 import { z } from 'zod';
 import type { EntryType } from '@typesafe-ai/sdk';
 import { JevDecisionEngine, type DecisionEngine, type DecisionRequest } from './decision.js';
+import { assertPlaywrightCore } from './playwright-core-version.js';
 import { BrowserError, browserError, diagnostic, launchError, obscuredTarget } from './errors.js';
 import { capture, publicURL, verifyTarget, currentSemanticEvidence, readLocatorEvidence, semanticWithinScope, captureComboboxChoice, captureRegions, verifyOwnedOption, assertScope, type Captured } from './observation.js';
 import { actionCandidates, actionDescription, inputBindings, modelElement, resolveSelectChoice } from './actions.js';
@@ -89,6 +90,7 @@ export class JevBrowser {
   private readonly startedAt = new Date().toISOString();
 
   constructor(options: BrowserOptions) {
+    assertPlaywrightCore();
     this.currentPage = options.page;
     const { apiKey, ...rest } = options;
     this.options = rest; this.#apiKey = apiKey;
@@ -111,6 +113,7 @@ export class JevBrowser {
     }, this.options);
   }
   static async launch(options: BrowserLaunchOptions = {}): Promise<JevBrowser> {
+    assertPlaywrightCore();
     if ([options.userDataDir, options.cdpEndpoint, options.wsEndpoint].filter(Boolean).length > 1)
       throw new BrowserError('CONFIG', 'Choose only one persistent profile, CDP endpoint, or WebSocket endpoint.');
     const name = options.browser ?? process.env.JEV_BROWSER ?? 'chromium';

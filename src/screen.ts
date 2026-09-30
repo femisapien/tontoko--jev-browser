@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { Frame, Page, Request } from 'playwright';
+import type { Frame, Page, Request } from 'playwright-core';
 import { z } from 'zod';
 import { BrowserError } from './errors.js';
 import { FileAccess } from './paths.js';
+import { playwrightCoreVersion } from './playwright-core-version.js';
 import type { BrowserLaunchOptions, OperationContext } from './types.js';
 import { version } from './version.js';
 
@@ -64,7 +64,6 @@ const settleMs = 5_000;
 // Capture waits for scroll events to stop for two animation frames, or for none to start, within a cap.
 const scroll = { key: 'jev-browser.screen.scroll', quietFrames: 2, idleMs: 200, capMs: 1_500 };
 type ScrollWatch = { events: number; seen: number; quiet: number; start: number; stop: () => void };
-const playwrightVersion = (createRequire(import.meta.url)('playwright/package.json') as { version: string }).version;
 // Journal headers keep plain display settings; credentials, headers, paths, endpoints and other values become markers.
 const plainLaunch = new Set(['headless','channel','slowMo','chromiumSandbox','devtools']);
 const plainContext = new Set(['viewport','screen','deviceScaleFactor','isMobile','hasTouch','locale','timezoneId','colorScheme','reducedMotion','forcedColors','contrast','javaScriptEnabled','bypassCSP','ignoreHTTPSErrors','offline','acceptDownloads','serviceWorkers','userAgent','permissions']);
@@ -270,7 +269,7 @@ export class ScreenController {
     const page = this.page(), browser = page.context().browser(), launch = launchEvidence(this.launch);
     return JSON.stringify({
       action: { id: randomUUID(), kind: 'header', startedAt: this.startedAt, durationMs: 0, outcome: 'observed' }, input: {}, frames: [],
-      header: { jevBrowser: version, playwright: playwrightVersion, ...(browser ? { browser: { name: browser.browserType().name(), version: browser.version() } } : {}),
+      header: { jevBrowser: version, playwright: playwrightCoreVersion, ...(browser ? { browser: { name: browser.browserType().name(), version: browser.version() } } : {}),
         viewport: page.viewportSize(), ...(launch ? { launch } : {}) },
     })+'\n';
   }

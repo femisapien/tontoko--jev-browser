@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import type { ElementHandle, JSHandle, Page, Frame, Locator } from 'playwright';
+import type { ElementHandle, JSHandle, Page, Frame, Locator } from 'playwright-core';
 import type { Snapshot, ElementInfo, SemanticEvidence, SemanticLocatorProperty } from './types.js';
 import { BrowserError, type BrowserErrorCode } from './errors.js';
 import type * as DOM from './dom.js';

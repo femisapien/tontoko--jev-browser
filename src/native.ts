@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { ElementHandle, Locator, Route } from 'playwright';
+import type { ElementHandle, Locator, Route } from 'playwright-core';
 import { BrowserError } from './errors.js';
 import { publicURL } from './observation.js';
 import { BrowserEvents } from './browser-events.js';
