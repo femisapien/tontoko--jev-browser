@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A screen observation is no longer invalidated by `history.replaceState` or `history.pushState` calls that keep the current URL, so frameworks that call history.replaceState with the current URL, e.g. on scroll, no longer make the next input fail with `STALE_SCREEN`.
+
 ## 0.12.1
 
 - A screen `scroll` now captures after the scroll settles, including smooth scrolling, instead of racing the wheel. The returned image no longer shows the unscrolled page, and the next input with its `observationId` no longer fails with `STALE_SCREEN`.

@@ -165,7 +165,15 @@ export class ScreenController {
     } };
     const wake = () => { for (const waiter of tracking.waiters) waiter(); };
     // Subframe content can change like any other page content; only a main-frame navigation replaces the observed document.
-    const onNavigation = (frame: Frame) => { if (frame !== page.mainFrame()) return; tracking.generation++; tracking.navigations.clear(); tracking.interrupt?.abort(); wake(); };
+    // A history update that keeps the URL, with no navigation request pending, leaves the same document at the same address:
+    // frameworks call history.replaceState with the current URL, e.g. on scroll. A reload keeps the URL but has a request.
+    let url = page.mainFrame().url();
+    const onNavigation = (frame: Frame) => {
+      if (frame !== page.mainFrame()) return;
+      const previous = url; url = frame.url();
+      if (url === previous && !tracking.navigations.size) return;
+      tracking.generation++; tracking.navigations.clear(); tracking.interrupt?.abort(); wake();
+    };
     const settled = (request: Request | null) => { if (request && tracking.navigations.delete(request)) wake(); };
     const onRequest = (request: Request) => {
       settled(request.redirectedFrom());
