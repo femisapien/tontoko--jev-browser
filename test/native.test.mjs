@@ -52,7 +52,7 @@ test('native form filling select check and assertions preserve values',async t=>
 test('native assertions raise target errors instead of reporting a mismatch',async t=>{
  const {core}=await fixture(t,'<button>A</button><button>B</button>');
  // Two matches are a caller error, not evidence that the element is hidden.
- await assert.rejects(core.native({command:'assert',target:'button',property:'visible'}),error=>error.code!=='ASSERTION_FAILED'&&/strict mode violation/.test(error.message));
+ await assert.rejects(core.native({command:'assert',target:'button',property:'visible'}),error=>error.code==='AMBIGUOUS_TARGET'&&/strict mode violation/.test(error.message));
  await core.native({command:'assert',target:'button >> nth=1',property:'text',expected:'B'});
 });
 test('a Playwright wait that times out inside the assertion window keeps polling as an unmet expectation',async t=>{
