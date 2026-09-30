@@ -7,6 +7,11 @@
 - `act`, `observe` and `run` no longer send link URLs in their decision state (observe on a 40-row table with a link per row: ~99.5 KB to ~86.2 KB); `extract` and semantic evidence keep them, and link `href` sources now have their own budget instead of counting toward `maxTexts`.
 - An `act`/`observe` decision request larger than 128 KiB now fails with `OBSERVATION_LIMIT` before any provider call instead of a provider `PROVIDER_ERROR`; decision requests omit `frame` for the main frame.
 - New opt-in `screenFollowPopups` launch option (CLI/MCP `--screen-follow-popups`, with screen-only mode): a new tab the observed page opens becomes the observed page instead of being closed, results report `pageSwitched`, and closing that tab returns to its opener.
+- Plans, snapshot refs, `run` actions and owned combobox options are re-checked right before the effect, after caller policies and model decisions, against the Page, document, frame and observation scope they were captured in; a target that left them fails with `STALE_TARGET` instead of being clicked.
+- `run()` adopts a UI readback as a checkpoint only after re-reading that the same result record and page headings/status/alerts are still shown; otherwise it observes again (the save is never repeated).
+- `run()` progress waits watch only the observed frames and scope roots, so a change in an unrelated frame or region outside `scope` no longer ends a wait early.
+- If the Page closes while a `run()` pauses, its own result or error is returned instead of a failure from preparing carried wizard input, and no continuation is kept.
+- `run()` re-decides instead of executing a speculative action that targets a control whose input it just applied, and a model "done" answer given before inputs were applied no longer skips to the final `expect`.
 
 ## 0.13.0
 

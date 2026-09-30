@@ -7,7 +7,7 @@ import type { EntryType } from '@typesafe-ai/sdk';
 import { DECISION_REQUEST_BYTES, JevDecisionEngine, decisionRequestBytes, type DecisionEngine, type DecisionRequest } from './decision.js';
 import { assertPlaywrightCore } from './playwright-core-version.js';
 import { BrowserError, browserError, diagnostic, launchError, obscuredTarget } from './errors.js';
-import { capture, publicURL, verifyTarget, currentSemanticEvidence, readLocatorEvidence, semanticWithinScope, captureComboboxChoice, captureRegions, verifyOwnedOption, assertScope, validateScopeSyntax, type Captured, type Scope } from './observation.js';
+import { capture, publicURL, verifyTarget, verifyCapturedTarget, currentSemanticEvidence, readLocatorEvidence, semanticWithinScope, captureComboboxChoice, captureRegions, verifyOwnedOption, assertScope, validateScopeSyntax, type Captured, type Scope } from './observation.js';
 import { actionCandidates, actionDescription, inputBindings, modelElement, modelTexts, resolveSelectChoice } from './actions.js';
 import { flattenInputs } from './bindings.js';
 import { extractStructured } from './structured.js';
@@ -175,7 +175,7 @@ export class JevBrowser {
       const captured = this.snapshotCapture?.refs.has(id) ? this.snapshotCapture : this.pending?.captured;
       const ref = captured?.refs.get(id);
       if (!captured || !ref || this.page.url() !== captured.rawURL) throw new BrowserError('STALE_TARGET', 'Snapshot reference is expired or from another page. Take a new snapshot.');
-      await verifyTarget(ref); return ref.handle;
+      await verifyCapturedTarget(this.page, captured, ref); return ref.handle;
     }
     const frame = frameIndex === undefined ? this.page.mainFrame() : this.page.frames()[frameIndex];
     if (!frame) throw new BrowserError('INVALID_ARGUMENT', 'Frame index is not present.');
@@ -314,7 +314,7 @@ export class JevBrowser {
     const captured = this.snapshotCapture?.refs.has(id) ? this.snapshotCapture : this.pending?.captured;
     const ref = captured?.refs.get(id);
     if (!captured || !ref || this.page.url() !== captured.rawURL) throw new BrowserError('STALE_TARGET', 'The scope ref is expired or from another page. Take a new snapshot, or locate it again.');
-    await verifyTarget(ref, operation.signal);
+    await verifyCapturedTarget(this.page, captured, ref, operation.signal);
     const handle = await ref.handle.evaluateHandle(element => element) as ElementHandle<Element>;
     return { scope: { frame: ref.frame, handle }, release: () => handle.dispose() };
   }
@@ -534,7 +534,7 @@ export class JevBrowser {
       page: () => this.page, capture: () => capture(this.page,{...observation,scope:options.scope,signal:operation.signal,deadline:operation.deadline}),
       regions: () => captureRegions(this.page),
       captureRegion: ref => capture(this.page,{...observation,selection:{frame:ref.frame,roots:[ref.handle]},signal:operation.signal}),
-      captureChoice: (ref,value) => captureComboboxChoice(this.page,ref,value,view,{signal:operation.signal,timeoutMs:Math.min(this.remaining(operation),options.settleTimeoutMs??2000)}),
+      captureChoice: (ref,value,anchor) => captureComboboxChoice(this.page,ref,value,view,{signal:operation.signal,timeoutMs:Math.min(this.remaining(operation),options.settleTimeoutMs??2000)},anchor),
       engine: () => this.engine(), operation: () => ({signal:operation.signal,timeoutMs:this.remaining(operation)}),
       perform: (plan,observed,values,started) => this.executeCaptured(plan,observed,values,operation,started),
       assert: async condition => {
@@ -556,17 +556,22 @@ export class JevBrowser {
     // Uncommitted wizard values are reusable only while the paused browser view
     // remains unchanged. They are never promoted to saved checkpoint evidence.
     let carried:CarriedState|undefined;
-    if(carriedInputs.length&&!pendingUnknown&&result.status!=='complete'&&!unknownNonCommit(result)){
-      const observed=await capture(this.page,{...observation,scope:options.scope});
-      try{carried={inputPaths:carriedInputs,context:JSON.stringify([observed.rawURL,observed.changeKeys])};}
-      finally{await observed.dispose();}
+    if(carriedInputs.length&&!pendingUnknown&&result.status!=='complete'&&!unknownNonCommit(result)&&!this.page.isClosed()){
+      // Optional resume preparation: if the view cannot be read (for example the Page closed meanwhile),
+      // carried input is dropped rather than replacing the run's own result or error.
+      try{
+        const observed=await capture(this.page,{...observation,scope:options.scope});
+        try{carried={inputPaths:carriedInputs,context:JSON.stringify([observed.rawURL,observed.changeKeys])};}
+        finally{await observed.dispose();}
+      }catch{carried=undefined;}
     }
     return {result,...(resolutions.length?{resolutions}:{}),...(failure?{error:failure}:{}),...(pendingUnknown?{pendingUnknown}:{}),...(carried?{carried}:{}),...(verifiedActionKeys.size?{verifiedActionKeys:[...verifiedActionKeys]}:{})};
   }
   private attachContinuation(execution: GoalExecution, instruction: string, options: RunOptions, existingId?: string): RunResult {
     const {result,error,pendingUnknown,verifiedActionKeys,carried,resolutions}=execution;
     const finish=(value:RunResult):RunResult=>{if(error){error.partial=value;throw error;}return value;};
-    if(result.status==='complete'){if(existingId)this.dropContinuation(existingId);return finish(result);}
+    // A closed Page cannot be resumed, so no continuation is kept for it.
+    if(result.status==='complete'||this.page.isClosed()){if(existingId)this.dropContinuation(existingId);return finish(result);}
     const checkpoints=result.checkpoints??[];
     // Carried wizard input needs no checkpoint: resume first re-checks its paused view.
     const resumableMissing=(checkpoints.length>0||!!carried)&&!unknownNonCommit(result);
@@ -686,11 +691,11 @@ export class JevBrowser {
     const op=()=>({signal:operation.signal,timeoutMs:this.remaining(operation)});
     if(this.options.allowAction && await this.options.allowAction(structuredClone(plan),op())!==true)
       throw new BrowserError('ACTION_DENIED','The caller policy denied this action.');
-    if(this.page.url()!==captured.rawURL)throw new BrowserError('STALE_TARGET','The page navigated after observation. Observe again.');
+    if(this.page!==captured.page||this.page.url()!==captured.rawURL)throw new BrowserError('STALE_TARGET','The page navigated after observation. Observe again.');
     const action=plan.action, ref=action.target?captured.refs.get(action.target.id):undefined;
     if(action.deferred)throw new BrowserError('UNRESOLVED_ACTION','A deferred option choice cannot be executed.');
     if(action.target&&!ref)throw new BrowserError('STALE_TARGET','The observed target is no longer available.');
-    if(ref)await verifyTarget(ref,operation.signal);
+    if(ref)await verifyCapturedTarget(this.page,captured,ref,operation.signal);
     const target=action.target?{ref:action.target.id,element:action.target.name,frame:action.target.frame}:{};
     let command: NativeCommand;
     switch(action.kind){
@@ -708,7 +713,9 @@ export class JevBrowser {
     if(this.options.allowCommand && await this.options.allowCommand(structuredClone(parsed),op())!==true)
       throw new BrowserError('ACTION_DENIED','The caller policy denied this action.');
     operation.signal.throwIfAborted();
-    if(ref)await verifyTarget(ref,operation.signal);
+    // Caller policies can await arbitrary work: re-check Page, document, frame, scope and identity right before the effect.
+    if(this.page!==captured.page||this.page.url()!==captured.rawURL)throw new BrowserError('STALE_TARGET','The page navigated during authorization. Observe again.');
+    if(ref)await verifyCapturedTarget(this.page,captured,ref,operation.signal);
     if(action.ownerId){
       const owner=captured.refs.get(action.ownerId);if(!owner||!ref)throw new BrowserError('STALE_TARGET','The observed option owner is no longer available.');
       await verifyOwnedOption(owner,ref);

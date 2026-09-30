@@ -8,7 +8,7 @@ import { actionCandidates, actionDescription, modelDialog, modelElementId, input
 import { decideFrontier, type DecisionUsage } from './frontier.js';
 import { bindingQuestions, flattenInputs, inputAction, inputMetadata, matchesControl, privateFilter, publicInputs, readControl, bindingAuthority, nativeFormValid, nativeFormBusy, reuseQuestions, needsBinding, sameNativeForm, type InputBinding } from './bindings.js';
 import { recordCounts, verifyReadback, waitForRelevantChange } from './completion.js';
-import type { Captured, ElementRef, RegionIndex } from './observation.js';
+import { readbackIsCurrent, type Captured, type ElementRef, type RegionIndex } from './observation.js';
 import type { ActionPlan, ActResult, GoalCheckpoint, GroundedAction, OperationContext, RunEffect, RunOptions, RunResult, RunVerification, RunAssertion, RunBlocker, SelectionResolution } from './types.js';
 
 export interface PendingCommitState { effectId: string; before?: [string,number][]; inputPaths: string[]; actionKey: string }
@@ -18,7 +18,7 @@ export interface RunSeed { resolutions?: ResolvedInput[]; carriedInputs?: string
 export interface RunHost {
   page(): Page;
   capture(): Promise<Captured>;
-  captureChoice(ref:ElementRef,value:string):Promise<Captured>;
+  captureChoice(ref:ElementRef,value:string,anchor:Captured):Promise<Captured>;
   regions():Promise<RegionIndex>;
   captureRegion(ref:ElementRef):Promise<Captured>;
   engine(): DecisionEngine;
@@ -175,8 +175,13 @@ export async function runGoal(host: RunHost, instruction: string, options: RunOp
       if(observed.data.truncatedTexts)return finish('unverified','observation-limit');
       if(options.until&&await callerCondition()){checkpoint(verification!,actionKey);return finish('complete','verified');}
       if(before){
-        const readback=await verifyReadback(before,observed.data,instruction,inputs.filter(input=>input.applied),decide);
+        const applied=inputs.filter(input=>input.applied);
+        const readback=await verifyReadback(before,observed.data,instruction,applied,decide);
         if(readback){
+          // The judgment took time: adopt it only while the same result and page status are still shown.
+          // Otherwise observe again; the save itself is never replayed.
+          if(!await readbackIsCurrent(host.page(),observed,readback.verification.recordId!)){observed=await capture('readback');continue;}
+          for(const input of applied)input.readback=readback.verification.readback.includes(input.path);
           verification=readback.verification;checkpoint(verification,actionKey);
           if(readback.stage==='continue'||inputs.some(input=>!input.applied)){
             verification=undefined;return undefined;
@@ -306,7 +311,7 @@ Input bindings listed in state.inputs are available locally, not missing. Their 
           if(target.role==='combobox'&&target.tag!=='select'){
             input.ref=await applyCombobox(input,ref,observed,{
               perform:(action,snapshot,value)=>perform(action,snapshot,'input',value,confidences.get(input)!),
-              captureChoice:async(ref,value)=>{const snapshot=await host.captureChoice(ref,value);captures.add(snapshot);return snapshot;},
+              captureChoice:async(ref,value,anchor)=>{const snapshot=await host.captureChoice(ref,value,anchor);captures.add(snapshot);return snapshot;},
               operation:()=>{const op=host.operation();return {...op,timeoutMs:Math.min(op.timeoutMs,settle)};},
             });
             input.target=input.ref.info.id;input.applied=true;
@@ -328,10 +333,10 @@ Input bindings listed in state.inputs are available locally, not missing. Their 
       }
       if(choice==='__inputs__')continue;
       if(!action){
-        if(await callerCondition()||!options.until&&await callerAssertions())return finish('complete','verified');
         // The speculative no-action answer predates these actual input effects.
-        // Ask on their new state; do not guess a Save or resample unchanged evidence.
-        if(steps.length>beforeInputs)continue;
+        // Ask on their new state before any final caller verification; do not guess a Save or resample unchanged evidence.
+        if(steps.length>beforeInputs){lastRequest='';continue;}
+        if(await callerCondition()||!options.until&&await callerAssertions())return finish('complete','verified');
         if(await wait(observed))continue;
         if(await callerCondition())return finish('complete','verified');
         if(choice==='__done__'&&options.until){
@@ -358,8 +363,10 @@ Input bindings listed in state.inputs are available locally, not missing. Their 
         }
         return finish(choice==='__done__'?'unverified':'stopped',inputs.some(i=>!i.applied)?'missing-input':choice==='__done__'?'model-complete':'no-match');
       }
+      // The speculative action was chosen before this control's input was applied.
+      // Re-decide from the resulting state instead of undoing that input with an obsolete answer.
+      if(action.target&&planned.some(entry=>entry.input.applied&&entry.target.id===action!.target!.id)){lastRequest='';continue;}
       if(action.deferred){
-        if(planned.some(entry=>entry.target.id===action!.target!.id&&entry.input.applied))continue;
         action=await resolveSelectChoice(action,instruction,decide,host.candidateLimit)??undefined;
         if(!action)return finish('stopped','no-match');
       }

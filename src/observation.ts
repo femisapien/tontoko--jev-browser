@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import type { ElementHandle, JSHandle, Page, Frame, Locator } from 'playwright-core';
 import type { Snapshot, ElementInfo, SemanticEvidence, SemanticLocatorProperty } from './types.js';
 import { BrowserError, browserError, type BrowserErrorCode } from './errors.js';
@@ -12,7 +13,17 @@ export function publicURL(value: string): string {
   catch { return '[unavailable URL]'; }
 }
 export interface ElementRef { frame: Frame; handle: ElementHandle<Element>; signature: string; info: ElementInfo }
+/** One observed frame: its document URL at capture time and, for a scoped capture, the roots that bounded it (owned by the capture). */
+export interface CapturedFrame { frame: Frame; rawURL: string; roots?: ElementHandle<Element>[] }
 export interface Captured {
+  /** The Page this observation belongs to. */
+  page: Page;
+  /** Frames that were actually observed, by frame index. */
+  frames: Map<number, CapturedFrame>;
+  /** For an owned popup choice: the run observation and control it was opened from, which must still hold as well. */
+  anchor?: { capture: Captured; ref: { frame: Frame; handle: ElementHandle<Element> } };
+  /** A fresh capture of the same Page, frames and roots with the same options; the caller disposes it. */
+  reread(): Promise<Captured>;
   data: Snapshot;
   refs: Map<string, ElementRef>;
   textRefs?: Map<string, { frame: Frame; handle: ElementHandle<Element>; kind: DOM.SemanticTextKind }>;
@@ -54,8 +65,9 @@ async function captureOnce(page: Page, options: CaptureOptions): Promise<Capture
   const refs = new Map<string, ElementRef>();
   const textRefs = new Map<string, { frame: Frame; handle: ElementHandle<Element>; kind: DOM.SemanticTextKind }>();
   const changeKeys: Record<number,string> = {};
+  const frames = new Map<number, CapturedFrame>();
   const owned: JSHandle[] = [];
-  const dispose = async () => { await Promise.allSettled(owned.splice(0).map(handle => handle.dispose())); refs.clear(); textRefs.clear(); };
+  const dispose = async () => { await Promise.allSettled(owned.splice(0).map(handle => handle.dispose())); refs.clear(); textRefs.clear(); frames.clear(); };
   const rawURL = page.url();
   const data: Snapshot = {
     id: randomUUID(), url: publicURL(rawURL), title: await page.title(), elements: [], texts: [], records: [],
@@ -63,14 +75,22 @@ async function captureOnce(page: Page, options: CaptureOptions): Promise<Capture
     scroll: await page.evaluate(() => ({ y: window.scrollY, maxY: Math.max(0, document.documentElement.scrollHeight - window.innerHeight), height: window.innerHeight })),
   };
   let scopeFound = false;
+  // Selection roots belong to the caller and may be released before this capture is; keep our own handles to the same elements.
+  let selection = options.selection;
   try {
+    if (selection) {
+      const roots: ElementHandle<Element>[] = [];
+      for (const root of selection.roots) { const own = await root.evaluateHandle(element => element) as ElementHandle<Element>; owned.push(own); roots.push(own); }
+      selection = { frame: selection.frame, roots };
+    }
     // Read a frame completely before recording it, so a frame removed mid-read leaves no partial evidence.
     const observeFrame = async (frameIndex: number, frame: Frame) => {
       const hrefCount = data.texts.filter(text => text.attribute === 'href').length;
       const frameOptions = { maxElements: Math.max(0, options.maxElements - data.elements.length), maxTexts: Math.max(0, options.maxTexts - (data.texts.length - hrefCount)), maxHrefs: Math.max(0, options.maxTexts - hrefCount) };
       // Use Playwright's native CSS resolver, including open shadow roots.
-      const roots = options.selection?.roots ?? (options.scope ? await scopeHandles(frame, options.scope) : undefined);
-      if (roots && !options.selection) owned.push(...roots);
+      const roots = selection?.roots ?? (options.scope ? await scopeHandles(frame, options.scope) : undefined);
+      if (roots && !selection) owned.push(...roots);
+      const frameURL = frame.url();
       const recordRoots = options.recordsScope ? (await frame.locator(`css=${options.recordsScope}`).elementHandles()) as ElementHandle<Element>[] : undefined;
       if (recordRoots) owned.push(...recordRoots);
       const excluded = options.exclude?.length ? (await Promise.all(options.exclude.map(selector => frame.locator(`css=${selector}`).elementHandles()))).flat() as ElementHandle<Element>[] : undefined;
@@ -86,6 +106,8 @@ async function captureOnce(page: Page, options: CaptureOptions): Promise<Capture
       const textProperties = textNodes ? await textNodes.getProperties() : new Map<string, JSHandle>();
       scopeFound ||= !!roots?.length;
       changeKeys[frameIndex] = observed.changeKey;
+      // A frame where the scope matched nothing yet is watched whole, so the scope appearing there still counts as progress.
+      frames.set(frameIndex, { frame, rawURL: frameURL, ...(roots?.length ? { roots } : {}) });
       data.busy ||= observed.busy;
       for (const [index, handle] of properties) {
         owned.push(handle);
@@ -111,10 +133,10 @@ async function captureOnce(page: Page, options: CaptureOptions): Promise<Capture
     for (const [frameIndex, frame] of page.frames().entries()) {
       // Page evaluation has no Playwright timeout; stop between frames once the operation ended.
       options.signal?.throwIfAborted();
-      if(options.selection && options.selection.frame !== frame)continue;
+      if(selection && selection.frame !== frame)continue;
       await observeFrame(frameIndex, frame).catch((error: unknown) => {
         // A child frame removed during capture is no longer part of the page; observe the rest.
-        if (!options.selection && frame !== page.mainFrame() && (frame.isDetached() || error instanceof Error && detachedFrame.test(error.message))) return;
+        if (!selection && frame !== page.mainFrame() && (frame.isDetached() || error instanceof Error && detachedFrame.test(error.message))) return;
         throw error;
       });
     }
@@ -122,7 +144,9 @@ async function captureOnce(page: Page, options: CaptureOptions): Promise<Capture
     options.signal?.throwIfAborted();
     if (page.url() !== rawURL) throw new BrowserError('STALE_SNAPSHOT', 'Page navigated while it was being observed. Observe again.', { retryable: true });
     if (options.requireScope && options.scope && !scopeFound) throw new BrowserError('SCOPE_NOT_FOUND', 'The observation scope matched no element. Check the selector, or wait for that region to appear.');
-    return { data, refs, textRefs, rawURL, changeKeys, dispose };
+    const retained = selection;
+    return { page, frames, data, refs, textRefs, rawURL, changeKeys, dispose,
+      reread: () => capture(page, { ...options, ...(retained ? { selection: retained } : {}), requireScope: false }) };
   } catch (error) { await dispose(); throw error; }
 }
 /** An explicit caller scope that matches nothing in any frame is an error, never an empty observation. */
@@ -139,9 +163,9 @@ export async function validateScopeSyntax(page: Page, scope: string | undefined)
   catch (error) { const mapped = browserError(error); if (mapped.code === 'INVALID_SELECTOR') throw mapped; }
 }
 /** Execute the shipped shared observation predicate, never caller/model-generated code. */
-export async function waitForFrameProgress(frame: Frame, baseline: string, timeoutMs: number, signal: AbortSignal): Promise<void> {
-  const changed = new Function('previous', `${source()}; return JevDOM.progressChanged(previous);`) as (previous: string) => boolean;
-  const handle = await frame.waitForFunction(changed,baseline,{polling:Math.min(100,Math.max(1,Math.floor(timeoutMs/4))),timeout:timeoutMs,signal});
+export async function waitForFrameProgress(frame: Frame, baseline: string, timeoutMs: number, signal: AbortSignal, roots?: ElementHandle<Element>[]): Promise<void> {
+  const changed = new Function('args', `${source()}; return JevDOM.progressChanged(args.previous, args.roots);`) as (args: { previous: string; roots?: Element[] }) => boolean;
+  const handle = await frame.waitForFunction(changed,{ previous: baseline, roots },{polling:Math.min(100,Math.max(1,Math.floor(timeoutMs/4))),timeout:timeoutMs,signal});
   await handle.dispose();
 }
 
@@ -158,9 +182,52 @@ export async function verifyTarget(ref: ElementRef, signal?: AbortSignal): Promi
     throw new BrowserError('STALE_TARGET', 'The observed target or its row identity changed. Observe again.');
 }
 
+/** A captured target still belongs to the observation that authorized it: same Page and document, same frame document, and inside the captured scope roots. */
+export async function withinCapturedScope(page: Page, captured: Captured, ref: { frame: Frame; handle: ElementHandle<Element> }): Promise<boolean> {
+  if (page !== captured.page || page.isClosed() || page.url() !== captured.rawURL || ref.frame.isDetached() || !page.frames().includes(ref.frame)) return false;
+  if (captured.anchor && !await withinCapturedScope(page, captured.anchor.capture, captured.anchor.ref)) return false;
+  const boundary = [...captured.frames.values()].find(entry => entry.frame === ref.frame);
+  if (!boundary || ref.frame.url() !== boundary.rawURL) return false;
+  if (!boundary.roots) return true;
+  const inside = new Function('element', 'roots', `${source()}; return element.isConnected && roots.every(root => root.isConnected) && JevDOM.withinSemanticRoots(element, roots);`) as (element: Element, roots: Element[]) => boolean;
+  return ref.handle.evaluate(inside, boundary.roots).catch(() => false);
+}
+/** Re-check observed-target authority after an await: Page, document, frame, scope and element identity. */
+export async function verifyCapturedTarget(page: Page, captured: Captured, ref: ElementRef, signal?: AbortSignal): Promise<void> {
+  if (!await withinCapturedScope(page, captured, ref)) {
+    signal?.throwIfAborted();
+    throw new BrowserError('STALE_TARGET', 'The observed target left its page, document or observation scope. Observe again.');
+  }
+  await verifyTarget(ref, signal);
+}
+/** The facts a readback judgment used: the result record with its sources, and page-level headings/status/alerts. */
+function readbackFacts(snapshot: Snapshot, recordId: string) {
+  const strip = ({ id: _id, ...text }: Snapshot['texts'][number]) => text;
+  const record = snapshot.records?.find(entry => entry.id === recordId);
+  const ids = new Set(record?.textIds);
+  return {
+    record: record ? { frame: record.frame, context: record.context, readOnly: record.readOnly, sources: snapshot.texts.filter(text => ids.has(text.id)).map(strip) } : undefined,
+    page: snapshot.texts.filter(text => ['heading', 'status', 'alert'].includes(text.role)).map(strip),
+  };
+}
+/** Re-read the Page before a readback judgment is adopted: the same result record and page status must still be shown. */
+export async function readbackIsCurrent(page: Page, captured: Captured, recordId: string): Promise<boolean> {
+  const before = readbackFacts(captured.data, recordId);
+  if (!before.record || page !== captured.page || page.isClosed() || page.url() !== captured.rawURL) return false;
+  let fresh: Captured | undefined;
+  try {
+    fresh = await captured.reread();
+    if (fresh.data.truncatedTexts || page.url() !== captured.rawURL) return false;
+    const current = fresh.data;
+    if (!isDeepStrictEqual(before.page, readbackFacts(current, '').page)) return false;
+    return (current.records ?? []).some(record => isDeepStrictEqual(before.record, readbackFacts(current, record.id).record));
+  } catch { return false; }
+  finally { await fresh?.dispose(); }
+}
+
 /** Wait locally for an owned exact option, then capture that actual node and its control. */
 export async function captureComboboxChoice(page: Page, ref: ElementRef, value: string,
-  limits: {maxElements:number;maxTexts:number}, operation: {signal:AbortSignal;timeoutMs:number}): Promise<Captured> {
+  limits: {maxElements:number;maxTexts:number}, operation: {signal:AbortSignal;timeoutMs:number}, anchor?: Captured): Promise<Captured> {
   const ready = new Function('args', `${source()}; return !args.element.isConnected || JevDOM.matchingComboboxOptions(args.element,args.value).length > 0;`) as (args:{element:Element;value:string})=>boolean;
   try {
     const wait=await ref.frame.waitForFunction(ready,{element:ref.handle,value},{timeout:operation.timeoutMs,signal:operation.signal,polling:50});
@@ -178,7 +245,10 @@ export async function captureComboboxChoice(page: Page, ref: ElementRef, value: 
     const options=handles.map(handle=>handle.asElement()).filter((handle):handle is ElementHandle<Element>=>!!handle);
     if(options.length>1)throw new BrowserError('AMBIGUOUS_SELECTION','Multiple enabled options with the same label belong to this combobox.');
     if(!options.length)throw new BrowserError('NO_MATCH','The matching option disappeared before observation.');
-    return await capture(page,{...limits,selection:{frame:ref.frame,roots:[ref.handle,options[0]!]}});
+    const choice=await capture(page,{...limits,selection:{frame:ref.frame,roots:[ref.handle,options[0]!]}});
+    // Approving the option also requires the control to remain where the run observed it.
+    if(anchor)choice.anchor={capture:anchor,ref:{frame:ref.frame,handle:ref.handle}};
+    return choice;
   } finally {await Promise.allSettled([result,...handles].map(handle=>handle.dispose()));}
 }
 
