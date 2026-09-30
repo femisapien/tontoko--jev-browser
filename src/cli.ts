@@ -8,6 +8,7 @@ import { startMcpStdio } from './stdio.js';
 import { openSession, sendSession, listSessions, hasSession } from './sessions.js';
 import { parseCLI, commandFromCLI, positive, readJSON } from './cli-options.js';
 import { installBrowser } from './install.js';
+import { requireCapability } from './capabilities.js';
 import { version } from './version.js';
 const help = `jev-browser — grounded Jev decisions and native Playwright, one SDK / CLI / MCP core
 
@@ -42,10 +43,15 @@ Options:
   --max-elements N  --max-texts N  --max-candidates N
   --browser chromium|firefox|webkit  --headed
   --cdp-endpoint URL  --ws-endpoint URL  --user-data-dir DIR
-  --storage-state FILE  --output-dir DIR  --file-root DIR (repeatable)
+  --storage-state FILE  --output-dir DIR
+  --file-root DIR            Upload read root (repeatable); uploads are refused without one.
+                             --file-root . allows the working directory
+  --caps LIST                Enable opt-in tools, comma-separated: storage (cookies, storage,
+                             storage_state), network (route), trace, evaluate (evaluate,
+                             init_script). Fixed when a session opens
   --viewport WxH  --reduced-motion  --color-scheme light|dark|no-preference  --locale TAG
   --options-file FILE        JSON launch/context options; explicit flags win
-  --allow-evaluate           Enable trusted page JS; never Node code execution
+  --allow-evaluate           Same as --caps evaluate: trusted page JS, never Node code
   --screen-only              Immutable session mode: screen pixels/physical inputs and close only
   --model NAME  --idle-timeout-ms N  --help  --version
 
@@ -61,15 +67,15 @@ async function write(value: unknown): Promise<void> {
   if (!process.stdout.write(`${JSON.stringify(value)}\n`)) await once(process.stdout, 'drain');
 }
 async function main(): Promise<void> {
-  const { values, positionals, options } = parseCLI();
+  const { values, positionals, options, capabilities } = parseCLI();
   if (values.version) { process.stdout.write(`${version}\n`); return; }
   if (values.help || !positionals.length) { process.stdout.write(help); return; }
   let [name, ...words] = positionals;
   if (name === 'install') { process.exitCode = await installBrowser(words[0] ?? options.browser!, values['dry-run']); return; }
-  if (name === 'mcp') { startMcpStdio(options, values.url); return; }
+  if (name === 'mcp') { startMcpStdio(options, values.url, capabilities); return; }
   if (name === 'sessions') { await write({ ok: true, result: await listSessions() }); return; }
   if (name === 'open') {
-    const result = await openSession(values.session ?? 'default', options, words[0] ?? values.url, positive(values['idle-timeout-ms'], '--idle-timeout-ms'));
+    const result = await openSession(values.session ?? 'default', options, words[0] ?? values.url, positive(values['idle-timeout-ms'], '--idle-timeout-ms'), capabilities);
     await write({ ok: true, result }); return;
   }
   if (name === 'call') { name = words.shift(); if (!name) throw new BrowserError('INVALID_ARGUMENT', 'call requires a command name.'); }
@@ -81,7 +87,10 @@ async function main(): Promise<void> {
   const browser = session ? undefined : await JevBrowser.launch(options);
   const execute = (request: ReturnType<typeof parseCommand>) => {
     const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(options.timeoutMs ?? 300_000)]);
-    return session ? sendSession(session, request, signal) : executeCommand(browser!, request, signal);
+    // A named session enforces the capabilities fixed when it was opened.
+    if (session) return sendSession(session, request, signal);
+    if (!browser!.screenOnly) requireCapability(capabilities, request.command);
+    return executeCommand(browser!, request, signal);
   };
   try {
     if (values.url && !['goto', 'navigate'].includes(name!)) {

@@ -3,9 +3,10 @@ import { JevBrowser } from './browser.js';
 import { createMcpServer } from './mcp.js';
 import { BrowserError, publicError } from './errors.js';
 import type { BrowserLaunchOptions } from './types.js';
+import type { Capability } from './capabilities.js';
 
 /** The official SDK owns transport and protocol; browser launch is lazy. */
-export function startMcpStdio(options: BrowserLaunchOptions = {}, initialURL?: string): void {
+export function startMcpStdio(options: BrowserLaunchOptions = {}, initialURL?: string, capabilities?: readonly Capability[]): void {
   let browser: Promise<JevBrowser> | undefined;
   let ownedBrowser: JevBrowser | undefined;
   let closing = false;
@@ -41,7 +42,7 @@ export function startMcpStdio(options: BrowserLaunchOptions = {}, initialURL?: s
   };
   const report = (error: unknown) => { process.stderr.write(`${JSON.stringify(publicError(error))}\n`); };
   const handle = serveStdio(() => {
-    const server = createMcpServer(getBrowser, { screenOnly: options.screenOnly });
+    const server = createMcpServer(getBrowser, { screenOnly: options.screenOnly, capabilities });
     server.server.onclose = () => { void closeBrowser().catch(report); };
     return server;
   }, { onerror: report });

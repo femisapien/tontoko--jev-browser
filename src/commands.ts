@@ -84,8 +84,8 @@ const descriptions: Partial<Record<CommandName, string>> = {
   take_screenshot: 'Capture viewport/full-page/element PNG or JPEG. Optional filename is inside the artifact directory.',
   screenshot: 'Capture a PNG of the selected viewport.',
   pdf: 'Save a PDF within the artifact directory. Chromium only.',
-  evaluate: 'Run a trusted caller-authored JavaScript function in the page. Disabled unless --allow-evaluate. Never invokes Jev.',
-  init_script: 'Install a trusted page init script, enabled only with --allow-evaluate.',
+  evaluate: 'Run a trusted caller-authored JavaScript function in the page. Needs --caps evaluate (or SDK allowEvaluate). Never invokes Jev.',
+  init_script: 'Install a trusted page init script. Needs --caps evaluate (or SDK allowEvaluate).',
   storage_state: 'Save cookies and origin state into the artifact directory. Treat the result as a secret.',
   close: 'Close this browser session and its owned resources. Borrowed Page/context are not closed.',
 };

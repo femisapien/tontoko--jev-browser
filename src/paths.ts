@@ -7,6 +7,8 @@ const within = (root: string, path: string) => { const r = relative(root, path);
 export class FileAccess {
   constructor(private readonly roots: string[], private readonly output: string) {}
   async input(path: string): Promise<string> {
+    // Refuse before resolving, so an unconfigured boundary does not reveal whether a path exists.
+    if (!this.roots.length) throw new BrowserError('FILE_ACCESS_DENIED', 'No file roots are configured, so file uploads are disabled. Start the CLI session or MCP server with --file-root DIR (--file-root . allows the working directory), or pass fileRoots to the SDK.');
     const real = await realpath(resolve(path));
     const roots = await Promise.all(this.roots.map(p => realpath(resolve(p))));
     if (!roots.some(root => within(root, real))) throw new BrowserError('FILE_ACCESS_DENIED', 'Input file is outside the configured file roots.');

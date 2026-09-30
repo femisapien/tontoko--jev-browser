@@ -55,7 +55,7 @@ test('session endpoints reject requests without the private authentication token
 });
 test('session commands keep multibyte UTF-8 intact across request chunks', async t => {
   const session = 'utf8-' + randomUUID().slice(0, 8); t.after(() => cli(['close', '--session', session]));
-  const open = await cli(['open', service.url, '--session', session]); assert.equal(open.code, 0, open.stdout);
+  const open = await cli(['open', service.url, '--session', session, '--caps', 'storage']); assert.equal(open.code, 0, open.stdout);
   let descriptor;
   for (const directory of await readdir(join(cwd, 'sessions'))) {
     try { const value = JSON.parse(await readFile(join(cwd, 'sessions', directory, 'session.json'), 'utf8')); if (value.name === session) descriptor = value; } catch {}
