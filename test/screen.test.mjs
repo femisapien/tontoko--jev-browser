@@ -7,6 +7,8 @@ import {join} from 'node:path';
 import {JevBrowser} from '../dist/index.js';
 import {parseCommand,executeCommand} from '../dist/commands.js';
 import {fixtureBrowser,httpServer} from './helpers.mjs';
+import {parseCLI} from '../dist/cli-options.js';
+import {launchOptionsHash} from '../dist/sessions.js';
 let browser,server,root;
 before(async()=>{
  browser=await fixtureBrowser();root=await mkdtemp(join(tmpdir(),'jev-screen-'));
@@ -274,6 +276,62 @@ test('sessions with ordinary tools keep dialogs and popup tabs for those tools',
  await assert.rejects(core.screen({action:'look'}),{code:'DIALOG_PENDING'});
  await executeCommand(core,parseCommand({command:'handle_dialog',accept:false}));
  await core.screen({action:'look'});
+});
+// With screenFollowPopups the opener stays open in the background; closing the followed tab returns observation to it.
+test('screenFollowPopups observes a new tab opened by window.open or target=_blank, then returns to the opener when it closes',async t=>{
+ const popupServer=await httpServer((req,res)=>{res.setHeader('content-type','text/html');res.end('<style>button{position:absolute;left:20px;top:80px;width:150px;height:40px}input{position:absolute;left:20px;top:20px;width:180px;height:32px}</style><input aria-label="popup"><button onclick="window.close()">Close</button><h1>PRIVATE_POPUP</h1>');});
+ t.after(()=>popupServer.close());
+ for(const [name,markup] of [
+  ['window.open','<button onclick="window.open(\''+popupServer.url+'\')">Open</button>'],
+  ['target=_blank','<a target="_blank" href="'+popupServer.url+'" style="position:absolute;left:20px;top:80px;width:150px;height:40px;display:block">Open</a>'],
+ ])await t.test(name,async t=>{
+  const {core,page,context}=await fixture(t,{screenOnly:true,screenFollowPopups:true});
+  await page.locator('button').evaluate((button,markup)=>{button.outerHTML=markup;},markup);
+  let seen=await core.screen({action:'look'});assert.equal(seen.pageSwitched,undefined);
+  // Playwright reports a popup after its first navigation, so a slow tab may arrive after the click result; the next look reports it then.
+  const popupEvent=context.waitForEvent('page');
+  let opened=await core.screen({action:'click',x:70,y:100,observationId:seen.observationId});
+  if(opened.pageSwitched===undefined){await popupEvent;opened=await core.screen({action:'look'});}
+  assert.equal(opened.pageSwitched,'popup');assert.notEqual(opened.observationId,seen.observationId);assert.equal(opened.frames.length,1);
+  assert.equal(context.pages().length,2,'the opener is kept');assert.notEqual(core.page,page);assert.equal(page.isClosed(),false);
+  assert.equal(core.page.url(),popupServer.url+'/');assert.equal(JSON.stringify(opened).includes('PRIVATE_'),false);
+  // The old observation cannot address the new page; the new one can.
+  await assert.rejects(core.screen({action:'click',x:60,y:35,observationId:seen.observationId}),{code:'STALE_SCREEN'});
+  seen=await core.screen({action:'look'});assert.equal(seen.pageSwitched,undefined,'reported once');
+  seen=await core.screen({action:'click',x:60,y:35,observationId:seen.observationId});
+  seen=await core.screen({action:'type',text:'In popup',observationId:seen.observationId});
+  const popup=core.page;assert.equal(await popup.locator('input').inputValue(),'In popup');
+  // The followed tab closes itself; the page that opened it is observed again.
+  const closed=popup.waitForEvent('close');
+  const result=await core.screen({action:'click',x:70,y:100,observationId:seen.observationId}).catch(error=>error);
+  await closed;
+  seen=result.pageSwitched==='opener'?result:await core.screen({action:'look'});
+  assert.equal(seen.pageSwitched,'opener');assert.equal(core.page,page);assert.equal(context.pages().length,1);
+  seen=await core.screen({action:'click',x:60,y:35,observationId:seen.observationId});
+  seen=await core.screen({action:'type',text:'Back',observationId:seen.observationId});
+  assert.equal(await page.locator('input').inputValue(),'Back');
+ });
+});
+test('screenFollowPopups refuses input after a tab opened between operations, then observes that tab',async t=>{
+ const {core,page,context}=await fixture(t,{screenOnly:true,screenFollowPopups:true});
+ const seen=await core.screen({action:'look'});
+ await Promise.all([context.waitForEvent('page'),page.evaluate(url=>{setTimeout(()=>window.open(url));},server.url)]);
+ await assert.rejects(core.screen({action:'click',x:60,y:35,observationId:seen.observationId}),error=>{
+  assert.equal(error.code,'STALE_SCREEN');assert.deepEqual(error.details,{pageSwitched:'popup'});return true;
+ });
+ assert.notEqual(await page.evaluate(()=>document.activeElement?.tagName),'INPUT','no input reached the opener');
+ const look=await core.screen({action:'look'});
+ assert.equal(look.pageSwitched,'popup');assert.equal(core.page.url(),server.url+'/');assert.equal(context.pages().length,2);
+ assert.equal((await core.screen({action:'look'})).pageSwitched,undefined);
+});
+test('screenFollowPopups requires screenOnly and is a fixed launch option',async()=>{
+ const context=await browser.newContext();const page=await context.newPage();
+ try{assert.throws(()=>new JevBrowser({page,screenFollowPopups:true}),{code:'CONFIG'});}finally{await context.close();}
+ assert.equal(parseCLI(['mcp','--screen-only','--screen-follow-popups']).options.screenFollowPopups,true);
+ assert.equal(parseCLI(['mcp','--screen-only']).options.screenFollowPopups,undefined);
+ assert.throws(()=>parseCLI(['mcp','--screen-follow-popups']),{code:'INVALID_ARGUMENT'});
+ const base=parseCLI(['open','--screen-only']).options,follow=parseCLI(['open','--screen-only','--screen-follow-popups']).options;
+ assert.notEqual(launchOptionsHash(base),launchOptionsHash(follow));
 });
 test('invalid screen commands cannot inject selectors or privileged keyboard chords',async t=>{
  const {core,page}=await fixture(t);assert.equal(typeof core.screen,'function');

@@ -113,6 +113,7 @@ export class JevBrowser {
     // Validated now, so a bad image endpoint fails at launch rather than at the first screenDecide.
     if (vision !== undefined) this.#vision = imageUnderstanding(vision);
     this.engineInstance = options.engine;
+    if (options.screenFollowPopups && !options.screenOnly) throw new BrowserError('CONFIG', 'screenFollowPopups requires screenOnly; without it, the tabs tool selects new tabs.');
     this.timeoutMs = positiveInteger(options.timeoutMs ?? 30_000, 'timeoutMs');
     this.limits = {
       maxElements: positiveInteger(options.maxElements ?? 120, 'maxElements'),
@@ -121,14 +122,15 @@ export class JevBrowser {
     };
     this.nativeBrowser = new NativeBrowser({
       page: () => this.page,
-      select: async page => {
-        const owner=pageLeases.get(page); if(owner && owner!==this)throw new BrowserError('BUSY','Another core is operating this Page.');
-        if(this.active){pageLeases.set(page,this);this.leasedPages.add(page);}
-        await this.invalidate(); this.currentPage = page;
-      },
+      select: page => this.selectPage(page),
       resolve: (target, frame) => this.resolveNative(target, frame),
       validateURL: async url => this.validURL(url),
     }, this.options);
+  }
+  private async selectPage(page: Page): Promise<void> {
+    const owner=pageLeases.get(page); if(owner && owner!==this)throw new BrowserError('BUSY','Another core is operating this Page.');
+    if(this.active){pageLeases.set(page,this);this.leasedPages.add(page);}
+    await this.invalidate(); this.currentPage = page;
   }
   static async launch(options: BrowserLaunchOptions = {}): Promise<JevBrowser> {
     assertPlaywrightCore();
@@ -196,7 +198,7 @@ export class JevBrowser {
     // A pending native dialog is reported as the reason a capture failed. Screen-only sessions cannot answer dialogs or switch tabs,
     // so the controller reports each once, then dismisses the dialog or closes the popup tab to recover.
     return this.screenController ??= new ScreenController(() => this.page, this.options.outputDir, () => { try { this.nativeBrowser.guard(); return false; } catch { return true; } }, this.options, this.startedAt,
-      this.screenOnly ? () => this.nativeBrowser.dismissDialogs() : undefined);
+      this.screenOnly ? () => this.nativeBrowser.dismissDialogs() : undefined, this.options.screenFollowPopups ? page => this.selectPage(page) : undefined);
   }
   /** Tool-surface refusal. Direct SDK Page access remains trusted caller code. */
   async recordScreenDenied(command: string): Promise<void> {

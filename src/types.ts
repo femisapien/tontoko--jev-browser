@@ -155,6 +155,10 @@ export interface BrowserOptions extends JevOptions {
   captureDialogs?: boolean;
   /** Restricts CLI/MCP/shared dispatch; direct caller Page access is still trusted. */
   screenOnly?: boolean;
+  /** Requires screenOnly. A new tab the observed page opens (window.open, target="_blank") becomes the observed page instead of being
+   * reported with SCREEN_POPUP_UNSUPPORTED and closed. The opener stays open in the background; when the followed tab closes, observation
+   * returns to it. Results that switched pages carry `pageSwitched`. */
+  screenFollowPopups?: boolean;
   allowCommand?: (command: BrowserCommand, operation: OperationContext) => boolean | Promise<boolean>;
   engine?: DecisionEngine;
   /**

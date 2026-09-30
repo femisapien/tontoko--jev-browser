@@ -50,6 +50,9 @@ export interface ScreenResult {
   navigated: boolean;
   frames: ScreenFrame[];
   action: { id: string; kind: ScreenRequest['action']; startedAt: string; durationMs: number; outcome: 'observed' | 'executed' | 'denied' | 'failed' | 'unknown' };
+  /** Only with screenFollowPopups: the observed page changed during this operation, to a new tab the page opened (`popup`)
+   * or, after a followed tab closed, back to the page that opened it (`opener`). Frames show that page; navigated refers to it. */
+  pageSwitched?: 'popup' | 'opener';
 }
 /** Sanitized SCREEN_FAILED/SCREEN_INTERRUPTED `details.reason`; never page content. */
 export type ScreenFailureReason = 'timeout' | 'cancelled' | 'navigation' | 'page-closed' | 'page-crashed' | 'dialog' | 'unknown';
@@ -58,6 +61,8 @@ type Observation = { id: string; page: Page; generation: number; viewport: Scree
 type Tracking = { page: Page; generation: number; navigations: Set<Request>; waiters: Set<() => void>; interrupt?: AbortController; popup?: Page; fileChooser?: boolean; crashed?: boolean; detach: () => void };
 /** A native dialog opened during a capture; the failure path reports it as SCREEN_FAILED reason dialog. */
 class CaptureDialog extends Error { override name = 'CaptureDialog'; }
+/** With follow, a popup tab opened during a capture; the capture is retaken on that tab. */
+class PopupOpened extends Error { override name = 'PopupOpened'; }
 type FrameEvidence = { sha256: string; width: number; height: number };
 type Capture = { frames: ScreenFrame[]; evidence: FrameEvidence[]; viewport: ScreenResult['viewport']; geometry: ViewportGeometry };
 type EvidenceAction = Omit<ScreenResult['action'],'kind'> & { kind: string };
@@ -163,20 +168,27 @@ export class ScreenController {
   private tracking?: Tracking;
   private readonly files?: FileAccess;
   private journal?: Promise<string>;
+  /** Followed tabs and the page that opened each, so a closed tab returns observation to its opener. */
+  private readonly openers = new WeakMap<Page, Page>();
+  /** A page switch not yet shown by a successful result, e.g. one reported only by a STALE_SCREEN refusal. */
+  private unreported?: ScreenResult['pageSwitched'];
   /** The journal file is created lazily, but its header reports when the session started. */
-  /** With dismissDialogs (screen-only sessions, which have no dialog or tab tools), a native dialog or popup tab is reported once, then dismissed or closed. */
+  /** With dismissDialogs (screen-only sessions, which have no dialog or tab tools), a native dialog or popup tab is reported once, then dismissed or closed.
+   * With follow (screenFollowPopups), a popup tab instead becomes the observed page through that callback. */
   constructor(private readonly page: () => Page, outputDir?: string, private readonly dialogPending?: () => boolean, private readonly launch?: Partial<BrowserLaunchOptions>,
-    private readonly startedAt: string = new Date().toISOString(), private readonly dismissDialogs?: () => Promise<boolean>) {
+    private readonly startedAt: string = new Date().toISOString(), private readonly dismissDialogs?: () => Promise<boolean>, private readonly follow?: (page: Page) => Promise<void>) {
     if (outputDir) this.files = new FileAccess([], outputDir);
   }
   /** Throws a capability-limit error for a popup tab, file chooser or (when recovering) held dialog. Recovery reports each once.
    * A dialog that opens while a capture runs is left for the failure path, which reports it once as SCREEN_FAILED reason dialog, then dismisses it. */
   private async unsupported(tracking: Tracking, capturing = false): Promise<void> {
     if (capturing && this.dismissDialogs && this.dialogPending?.()) throw new CaptureDialog();
+    if (capturing && this.follow && tracking.popup && !tracking.popup.isClosed()) throw new PopupOpened();
     if (this.dismissDialogs && await this.dismissDialogs())
       throw new BrowserError('SCREEN_DIALOG_UNSUPPORTED', dialogMessage);
     const popup = tracking.popup;
-    if (popup && !popup.isClosed()) {
+    // A followed popup is left for switchPage, before or after the input, or when a capture notices it.
+    if (popup && !popup.isClosed() && !this.follow) {
       if (!this.dismissDialogs) throw new BrowserError('SCREEN_POPUP_UNSUPPORTED','A new browser tab opened. This viewport session cannot inspect or switch that tab; this is a tool capability limit, not a product failure.');
       tracking.popup = undefined;
       await popup.close().catch(() => undefined);
@@ -184,6 +196,22 @@ export class ScreenController {
     }
     // Playwright intercepts the chooser and the Page stays usable, so it is reported once instead of blocking later observations.
     if (tracking.fileChooser) { tracking.fileChooser = false; throw new BrowserError('SCREEN_FILE_CHOOSER_UNSUPPORTED','A native file chooser opened. This viewport tool cannot inspect or operate it; this is a tool capability limit, not a product failure.'); }
+  }
+  /** With follow: makes a popup opened by the observed page the observed page, keeping the opener open in the background,
+   * or, when the observed page closed, returns to the nearest open page that opened it. Sends no input. */
+  private async switchPage(tracking: Tracking | undefined): Promise<ScreenResult['pageSwitched']> {
+    if (!this.follow) return undefined;
+    const page = this.page(), popup = tracking?.page === page ? tracking.popup : undefined;
+    if (tracking && popup) {
+      tracking.popup = undefined;
+      if (!popup.isClosed()) { this.openers.set(popup, page); await this.follow(popup); return this.unreported = 'popup'; }
+    }
+    if (!page.isClosed()) return undefined;
+    let opener = this.openers.get(page);
+    while (opener?.isClosed()) opener = this.openers.get(opener);
+    if (!opener) return undefined;
+    await this.follow(opener);
+    return this.unreported = 'opener';
   }
   private track(page: Page): Tracking {
     if (this.tracking?.page === page) return this.tracking;
@@ -274,7 +302,7 @@ export class ScreenController {
       return {frames,evidence,viewport:viewport!,geometry:geometry!};
     } catch (error) {
       // An interrupted capture is the same stale page as a navigation seen after it, whichever step the navigation reached.
-      if (interrupt.signal.aborted && !(error instanceof BrowserError) && !(error instanceof CaptureDialog) && !operation().signal.aborted && !page.isClosed())
+      if (interrupt.signal.aborted && !(error instanceof BrowserError) && !(error instanceof CaptureDialog) && !(error instanceof PopupOpened) && !operation().signal.aborted && !page.isClosed())
         throw new BrowserError('STALE_SCREEN','The Page changed during capture. Look again before any input.');
       throw error;
     } finally { if (tracking.interrupt === interrupt) tracking.interrupt = undefined; }
@@ -349,7 +377,17 @@ export class ScreenController {
       }
       // Rejections above send nothing and keep the latest observation usable. From here, each capture or input attempt consumes it.
       this.observation = undefined;
-      const page = this.page(), tracking = this.track(page);
+      // A followed page switch comes first, so input is never sent to a page this call did not observe.
+      await this.switchPage(this.tracking);
+      let switched = this.unreported;
+      if (switched && request.action !== 'look' && request.action !== 'wait') {
+        const stale = new BrowserError('STALE_SCREEN', switched === 'popup'
+          ? 'A new tab opened and is now the observed page. No input was sent. Look again before any input.'
+          : 'The observed tab closed; the page that opened it is observed again. No input was sent. Look again before any input.');
+        stale.details = { pageSwitched: switched };
+        throw stale;
+      }
+      let page = this.page(), tracking = this.track(page);
       generation = tracking.generation;
       await this.unsupported(tracking);
       if (previous && supplied !== undefined) {
@@ -365,7 +403,7 @@ export class ScreenController {
       }
       const point = (x: number, y: number) => ({ x: x / previous!.geometry.scale, y: y / previous!.geometry.scale });
       signal.throwIfAborted();
-      const baseline = generation;
+      let baseline = generation;
       if (request.action === 'scroll') await watchScroll(page,operation());
       effectStarted = !['look','wait'].includes(request.action);
       await perform(async () => { const op=operation(); switch (request!.action) {
@@ -392,14 +430,23 @@ export class ScreenController {
         case 'wait': await delay(request.milliseconds,undefined,{signal:operation().signal}); break;
       } });
       await this.unsupported(tracking);
+      // An input that opened a tab, or closed the followed tab, is observed on the page it led to.
+      const after = await this.switchPage(tracking);
+      if (after) { switched = after; this.unreported = after; page = this.page(); tracking = this.track(page); generation = baseline = tracking.generation; }
       // The image and its geometry must show where the wheel came to rest, or the next input would be judged stale.
-      if (request.action === 'scroll' && !tracking.navigations.size && tracking.generation === generation) await scrollSettled(page,operation());
+      if (request.action === 'scroll' && !after && !tracking.navigations.size && tracking.generation === generation) await scrollSettled(page,operation());
       let captured: Capture | undefined;
       for (let attempt=0; !captured; attempt++) {
-        if (attempt || tracking.navigations.size || tracking.generation !== generation) await this.settle(page,tracking,operation());
+        if (attempt || switched || tracking.navigations.size || tracking.generation !== generation) await this.settle(page,tracking,operation());
         generation = tracking.generation;
         try { captured = await this.capture(page,tracking,generation,request,operation,started,action.id,attempt); }
         catch (error) {
+          // A tab the page opened during the capture becomes the observed page, whose capture starts over.
+          if (error instanceof PopupOpened) {
+            const next = await this.switchPage(tracking);
+            if (next) { switched = next; page = this.page(); tracking = this.track(page); generation = baseline = tracking.generation; attempt = -1; }
+            continue;
+          }
           // Only the capture is retaken, once; input is never replayed. A dialog or an exhausted capture timeout is the
           // failure itself: retaking would report the same dialog in another shape, depending on which timer fired first.
           if (attempt || signal.aborted || page.isClosed() || this.page() !== page || this.dialogPending?.() || error instanceof CaptureDialog ||
@@ -409,9 +456,10 @@ export class ScreenController {
       signal.throwIfAborted();
       const observationId=randomUUID();
       this.observation={id:observationId,page,generation,viewport:captured.viewport,configured:page.viewportSize(),geometry:captured.geometry};
+      this.unreported=undefined;
       action.outcome=effectStarted?'executed':'observed';action.durationMs=performance.now()-started;
       await this.record(action,input,captured.frames,observationId,captured.evidence);
-      return {observationId,viewport:captured.viewport,navigated:generation!==baseline,frames:captured.frames,action:action as ScreenResult['action']};
+      return {observationId,viewport:captured.viewport,navigated:generation!==baseline,frames:captured.frames,action:action as ScreenResult['action'],...(switched ? { pageSwitched: switched } : {})};
     } catch (error) {
       action.outcome=effectStarted?'unknown':error instanceof BrowserError && ['INVALID_ARGUMENT','ACTION_DENIED','STALE_SCREEN','SCREEN_COORDINATES'].includes(error.code)?'denied':'failed';
       action.durationMs=performance.now()-started;

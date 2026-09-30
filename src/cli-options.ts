@@ -8,7 +8,7 @@ import type { BrowserLaunchOptions } from './types.js';
 import { parseCapabilities } from './capabilities.js';
 const definitions = {
   help: { type: 'boolean', short: 'h' }, 'dry-run': { type: 'boolean' }, version: { type: 'boolean' }, headed: { type: 'boolean' },
-  'allow-evaluate': { type: 'boolean' }, caps: { type: 'string', multiple: true }, 'screen-only': { type: 'boolean' }, session: { type: 'string', short: 's' },
+  'allow-evaluate': { type: 'boolean' }, caps: { type: 'string', multiple: true }, 'screen-only': { type: 'boolean' }, 'screen-follow-popups': { type: 'boolean' }, session: { type: 'string', short: 's' },
   url: { type: 'string' }, scope: { type: 'string' }, frame: { type: 'string' }, args: { type: 'string' },
   values: { type: 'string' }, fields: { type: 'string' }, schema: { type: 'string' }, 'records-scope': { type: 'string' },
   'plan-id': { type: 'string' }, 'max-steps': { type: 'string' }, 'timeout-ms': { type: 'string' }, model: { type: 'string' },
@@ -80,6 +80,7 @@ export function parseCLI(argv = process.argv.slice(2)) {
   const visionBaseURL = values['vision-base-url']?.trim() || undefined, visionModel = values['vision-model']?.trim() || undefined;
   if ((visionBaseURL === undefined) !== (visionModel === undefined)) throw new BrowserError('INVALID_ARGUMENT', '--vision-base-url and --vision-model must be given together.');
   const visionKey = process.env.JEV_VISION_API_KEY?.trim() || undefined;
+  if (values['screen-follow-popups'] && !values['screen-only']) throw new BrowserError('INVALID_ARGUMENT', '--screen-follow-popups requires --screen-only.');
   const options: BrowserLaunchOptions = {
     ...file, browser: browserName as BrowserLaunchOptions['browser'], headless: values.headed ? false : file.headless ?? true,
     timeoutMs: positive(values['timeout-ms'], '--timeout-ms'), model: values.model,
@@ -87,7 +88,7 @@ export function parseCLI(argv = process.argv.slice(2)) {
     cdpEndpoint: values['cdp-endpoint'] ?? file.cdpEndpoint, wsEndpoint: values['ws-endpoint'] ?? file.wsEndpoint, userDataDir: values['user-data-dir'] ?? file.userDataDir,
     storageState: values['storage-state'] ?? file.storageState, outputDir: values['output-dir'],
     // CLI/MCP uploads have no implicit read root; --file-root . grants the working directory.
-    fileRoots: values['file-root'] ?? [], allowEvaluate: capabilities.includes('evaluate'), screenOnly: values['screen-only'],
+    fileRoots: values['file-root'] ?? [], allowEvaluate: capabilities.includes('evaluate'), screenOnly: values['screen-only'], screenFollowPopups: values['screen-follow-popups'],
     ...(Object.keys(contextOptions).length ? { contextOptions } : {}),
     ...(visionBaseURL && visionModel ? { vision: { baseURL: visionBaseURL, model: visionModel, ...(visionKey ? { apiKey: visionKey } : {}) } } : {}),
   };

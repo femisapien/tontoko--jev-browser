@@ -55,6 +55,7 @@ Options:
   --options-file FILE        JSON launch/context options; explicit flags win
   --allow-evaluate           Same as --caps evaluate: trusted page JS, never Node code
   --screen-only              Immutable session mode: screen pixels/physical inputs and close only
+  --screen-follow-popups     With --screen-only: a new tab the page opens becomes the observed page
   --model NAME  --idle-timeout-ms N  --help  --version
   --vision-base-url URL  --vision-model NAME
                              Opt-in screen_decide: an OpenAI-compatible Chat Completions
