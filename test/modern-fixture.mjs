@@ -25,7 +25,8 @@ export function modernEngine(){return engine((q,r,id)=>{
 export function fieldOrder(variant){
   return [[0,1,2],[1,2,0],[2,0,1],[0,2,1],[2,1,0],[1,0,2]][variant%6];
 }
-export async function modernFixture(t,browser,{widget='portal',variant=0,live=false,duplicate=false,disabled=false,association=true,delayMs=0,ignoreSelection=false,noise=false,browserOptions={}}={}){
+// Options load after delayMs by default; syncOptions renders them in the opening event and holdOptions until window.releaseOptions().
+export async function modernFixture(t,browser,{widget='portal',variant=0,live=false,duplicate=false,disabled=false,association=true,delayMs=0,ignoreSelection=false,noise=false,syncOptions=false,holdOptions=false,browserOptions={}}={}){
   const suffix=randomBytes(5).toString('hex'),keys=[`u${suffix}a`,`u${suffix}b`,`u${suffix}c`];
   const control=`c${suffix}`,popup=`p${suffix}`,caption=`l${suffix}`;
   const records=[],attempts=[];
@@ -40,6 +41,7 @@ export async function modernFixture(t,browser,{widget='portal',variant=0,live=fa
   const pageHTML=`<h1>Music lessons</h1><button id="new-record">New learner</button><main id="editor"></main><section id="results"></section>
   <script>
   const keys=${JSON.stringify(keys)},choices=${JSON.stringify(options)};
+  const optionsReleased=new Promise(resolve=>{window.releaseOptions=resolve;});
   document.getElementById('new-record').onclick=()=>{
     document.getElementById('new-record').remove();document.getElementById('editor').innerHTML=${JSON.stringify(editor)};
     const form=document.querySelector('form'),combo=document.getElementById(${JSON.stringify(control)});
@@ -48,14 +50,15 @@ export async function modernFixture(t,browser,{widget='portal',variant=0,live=fa
     ${noise?`const decoy=document.createElement('div');decoy.setAttribute('role','listbox');decoy.innerHTML='<div role="option" onclick="window.decoyClicked=true">Viola da gamba</div>';document.body.prepend(decoy);`:''}
     let generation=0;
     function open(){const token=++generation;combo.setAttribute('aria-expanded','true');popup.hidden=false;popup.replaceChildren();
-      setTimeout(()=>{if(token!==generation)return;const query=${editable?'combo.value.toLowerCase()':"''"};
+      const load=${syncOptions?'render=>render()':holdOptions?'render=>optionsReleased.then(render)':`render=>setTimeout(render,${delayMs})`};
+      load(()=>{if(token!==generation)return;const query=${editable?'combo.value.toLowerCase()':"''"};
         for(const choice of choices.filter(choice=>!query||choice.label.toLowerCase().includes(query)).slice(0,20)){const option=document.createElement('div');option.setAttribute('role','option');option.textContent=choice.label;
           if(${disabled}&&choice.code==='gamba')option.setAttribute('aria-disabled','true');
           option.onclick=()=>{if(option.getAttribute('aria-disabled')==='true')return;window.optionClicks=(window.optionClicks||0)+1;
             if(!${ignoreSelection}){form.elements.namedItem(keys[2]).value=choice.code;${editable?'combo.value=choice.label;':'combo.textContent=choice.label;'}}
             else ${editable?"combo.value='';":"combo.textContent='Choose an instrument';"}
             popup.hidden=true;combo.setAttribute('aria-expanded','false');};popup.append(option);}
-      },${delayMs});}
+      });}
     ${editable?"combo.oninput=open;combo.onclick=()=>{if(combo.getAttribute('aria-expanded')!=='true')open();};":'combo.onclick=open;'}
     form.onsubmit=async event=>{event.preventDefault();const body=Object.fromEntries(new FormData(form));
       const response=await fetch('/records',{method:'POST',body:JSON.stringify(body)});const saved=await response.json();

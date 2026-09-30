@@ -18,7 +18,7 @@ test('modern controls: a different popup with the same option text is never sele
  assert.equal(result.status,'complete');assert.equal(await f.page.evaluate(()=>window.decoyClicked===true),false);assert.equal(f.attempts.length,1);
 });
 test('modern controls: two matching options in the owned popup are ambiguous',async t=>{
- const f=await modernFixture(t,browser,{duplicate:true});
+ const f=await modernFixture(t,browser,{duplicate:true,syncOptions:true});
  await assert.rejects(f.core.run(instruction,{values,settleTimeoutMs:200}),{code:'AMBIGUOUS_SELECTION'});
  assert.equal(f.attempts.length,0);assert.equal(await f.page.evaluate(()=>window.optionClicks??0),0);
 });
@@ -28,7 +28,7 @@ test('modern controls: an unassociated popup is not guessed from global text',as
  assert.notEqual(result?.status,'complete');assert.equal(f.attempts.length,0);assert.equal(await f.page.evaluate(()=>window.decoyClicked===true),false);
 });
 test('modern controls: disabled options never become a successful binding',async t=>{
- const f=await modernFixture(t,browser,{disabled:true});
+ const f=await modernFixture(t,browser,{disabled:true,syncOptions:true});
  const result=await f.core.run(instruction,{values,settleTimeoutMs:100}).catch(error=>error.partial);
  assert.notEqual(result?.status,'complete');assert.equal(f.attempts.length,0);assert.equal(await f.page.evaluate(()=>window.optionClicks??0),0);
 });
@@ -37,7 +37,7 @@ test('modern controls: option click authorization is not bypassed by the widget 
  await assert.rejects(f.core.run(instruction,{values}),{code:'ACTION_DENIED'});assert.equal(f.attempts.length,0);
 });
 test('modern controls: an option that closes without changing the selected value fails before Save',async t=>{
- const f=await modernFixture(t,browser,{ignoreSelection:true});
+ const f=await modernFixture(t,browser,{ignoreSelection:true,syncOptions:true});
  const result=await f.core.run(instruction,{values,settleTimeoutMs:100}).catch(error=>error.partial);
  assert.notEqual(result?.status,'complete');assert.equal(f.attempts.length,0);
 });
@@ -51,10 +51,13 @@ test('modern fixture: names and result labels do not expose caller paths and per
 });
 
 test('modern controls: cancellation while suggestions load cannot produce a late click',async t=>{
- const abort=new AbortController();let timer;
- const f=await modernFixture(t,browser,{widget:'editable',delayMs:350,browserOptions:{allowAction:plan=>{if(plan.action.target?.role==='combobox')timer=setTimeout(()=>abort.abort(),50);return true;}}});
- t.after(()=>clearTimeout(timer));
+ // Event-driven: cancel once the typed query has opened the popup, and load its suggestions only after the run has settled.
+ const abort=new AbortController();let opened;
+ const f=await modernFixture(t,browser,{widget:'editable',holdOptions:true,browserOptions:{allowAction:plan=>{
+   if(plan.action.target?.role==='combobox')opened??=f.page.getByRole('combobox',{expanded:true}).waitFor().then(()=>abort.abort());return true;}}});
  await assert.rejects(f.core.run(instruction,{values,signal:abort.signal}));
+ assert.ok(opened,'The combobox query must have been authorized before cancellation.');await opened;
+ await f.page.evaluate(()=>window.releaseOptions());
  await f.page.getByRole('option',{name:'Viola da gamba',exact:true}).waitFor();
  assert.equal(await f.page.evaluate(()=>window.optionClicks??0),0);assert.equal(f.attempts.length,0);
 });
@@ -64,7 +67,7 @@ test('modern controls: widget substeps honor the same overall step budget',async
 });
 test('modern controls: changing the control popup during option authorization prevents selection',async t=>{
  let page;
- const f=await modernFixture(t,browser,{browserOptions:{allowCommand:async command=>{
+ const f=await modernFixture(t,browser,{syncOptions:true,browserOptions:{allowCommand:async command=>{
    if(command.command==='click'&&command.element==='Viola da gamba')await page.getByRole('combobox').evaluate(el=>el.setAttribute('aria-controls','different-popup'));
    return true;
  }}});page=f.page;
@@ -98,8 +101,15 @@ test('modern controls: supplied data is not skipped by an already true caller pr
  assert.ok(result.steps.length>0); // The caller's true predicate controls completion, not an implied save oracle.
 });
 
+// The popup renders synchronously here: these cases are about completion and scope, not about loading latency.
 test('modern controls: an explicit false completion oracle cannot be replaced by inferred UI success',async t=>{
- const f=await modernFixture(t,browser);
+ const f=await modernFixture(t,browser,{syncOptions:true});
  const result=await f.core.run(instruction,{values,until:()=>false,settleTimeoutMs:100});
  assert.notEqual(result.status,'complete');assert.equal(f.attempts.length,1);
+});
+test('modern controls: options already shown when a short wait budget expires are still selected',async t=>{
+ // The deadline is judged on the page, not on how many polls fit into the budget on a slow runner.
+ const f=await modernFixture(t,browser,{syncOptions:true});
+ const result=await f.core.run(instruction,{values,settleTimeoutMs:1}).catch(error=>({error:`${error.code}: ${error.message}`,...error.partial}));
+ assert.equal(await f.page.evaluate(()=>window.optionClicks??0),1,JSON.stringify(result));
 });

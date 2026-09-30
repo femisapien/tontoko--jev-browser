@@ -229,13 +229,17 @@ export async function readbackIsCurrent(page: Page, captured: Captured, recordId
 export async function captureComboboxChoice(page: Page, ref: ElementRef, value: string,
   limits: {maxElements:number;maxTexts:number}, operation: {signal:AbortSignal;timeoutMs:number}, anchor?: Captured): Promise<Captured> {
   const ready = new Function('args', `${source()}; return !args.element.isConnected || JevDOM.matchingComboboxOptions(args.element,args.value).length > 0;`) as (args:{element:Element;value:string})=>boolean;
+  const args={element:ref.handle,value};let appeared=false;
   try {
-    const wait=await ref.frame.waitForFunction(ready,{element:ref.handle,value},{timeout:operation.timeoutMs,signal:operation.signal,polling:50});
-    await wait.dispose();
+    const wait=await ref.frame.waitForFunction(ready,args,{timeout:operation.timeoutMs,signal:operation.signal,polling:Math.min(50,Math.max(1,Math.floor(operation.timeoutMs/4)))});
+    await wait.dispose();appeared=true;
   } catch {
     operation.signal.throwIfAborted();
-    throw new BrowserError('NO_MATCH','No enabled exact option appeared in the bound control\'s declared popup.');
   }
+  // Judge the deadline on the page as it is when the budget expires, not on how many polls fit into it:
+  // a slow runner must not report NO_MATCH for options that were already shown.
+  if(!appeared)appeared=await ref.frame.evaluate(ready,args).catch(()=>false);
+  if(!appeared)throw new BrowserError('NO_MATCH','No enabled exact option appeared in the bound control\'s declared popup.');
   if(!await ref.handle.evaluate(el=>el.isConnected))throw new BrowserError('STALE_TARGET','The combobox was replaced while its options loaded.');
   const matching=new Function('element',`${source()}; return JevDOM.matchingComboboxOptions(element,${JSON.stringify(value)});`) as (element:Element)=>Element[];
   const result=await ref.handle.evaluateHandle(matching);

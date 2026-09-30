@@ -76,7 +76,8 @@ test('progress wait: replacing a captured root is a change',async t=>{
 
 for(const move of [false,true])test(`observed scope: owned popup control ${move?'leaves':'stays in'} original caller scope during option approval`,async t=>{
  let page;
- const app=await modernFixture(t,browser,{browserOptions:{allowCommand:async command=>{
+ // Synchronous options: this case is about the option approval, not about waiting for the popup to load.
+ const app=await modernFixture(t,browser,{syncOptions:true,browserOptions:{allowCommand:async command=>{
    if(move&&command.command==='click'&&command.element==='Viola da gamba')await page.evaluate(()=>{const outside=document.createElement('aside');document.body.append(outside);outside.append(document.querySelector('form'));});
    return true;
  }}});page=app.page;await page.getByRole('button',{name:'New learner',exact:true}).click();
