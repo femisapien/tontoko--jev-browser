@@ -10,6 +10,7 @@
 - When the selected tab is closed outside a `tabs` command, operations fail with the new `TAB_CLOSED` code, which says to pick another tab with `tabs` `select`, instead of `OPERATION_FAILED`. Jev does not switch tabs by itself.
 - A pending `dialog` result now includes the `pageId` of the tab that opened it, matching `tabs` results.
 - `downloads` `list` entries now include `navigation`, the tab's navigation generation when the download started, so downloads from different documents of one tab can be told apart.
+- A core attached to a borrowed Page without `captureDialogs` no longer intercepts file choosers between its operations, so the caller's own chooser handling and a headed browser's native picker work as usual; choosers opened during a Jev operation are still held for `file_upload`.
 
 ## 0.12.2
 

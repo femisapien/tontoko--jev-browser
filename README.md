@@ -190,7 +190,7 @@ test('save a name', async ({ page }) => {
 
 `JevBrowser.launch()` owns its resources. Chromium, Firefox, WebKit, persistent profiles, CDP, and Playwright WebSocket connections are supported. The SDK exposes `browser.page`, so native Playwright assertions, locators, fixtures and application-specific verification remain available.
 
-A borrowed Page keeps Playwright's default dialog handling outside Jev operations. Jev holds an `alert`, `confirm` or `prompt` only while one of its own operations runs, and returns it as a pending `dialog` for `handle_dialog`. Your own `page.click()` on a button that opens `confirm()` is dismissed by Playwright as usual and does not block later Jev operations. Pass `captureDialogs: true` to also hold dialogs that open between operations; `JevBrowser.launch()`, the CLI and the MCP server do this by default.
+A borrowed Page keeps Playwright's default dialog handling outside Jev operations. Jev holds an `alert`, `confirm` or `prompt` only while one of its own operations runs, and returns it as a pending `dialog` for `handle_dialog`. Your own `page.click()` on a button that opens `confirm()` is dismissed by Playwright as usual and does not block later Jev operations. File choosers follow the same rule. Pass `captureDialogs: true` to also hold dialogs and file choosers that open between operations; `JevBrowser.launch()`, the CLI and the MCP server do this by default.
 
 ### Semantic locate and confidence-aware assertions
 

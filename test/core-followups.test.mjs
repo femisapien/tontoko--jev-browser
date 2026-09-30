@@ -135,3 +135,25 @@ test('downloads carry the navigation generation of the document that started the
  assert.equal(typeof first.navigation,'number');assert.equal(first.navigation,second.navigation);assert.ok(third.navigation>first.navigation);
  const all=(await core.native({command:'downloads',action:'list',allTabs:true})).downloads;assert.equal(all[2].navigation,third.navigation);
 });
+
+test('a borrowed Page gets a file chooser listener only during Jev operations',async t=>{
+ const path=join(root,'chooser.txt');await writeFile(path,'chosen');
+ const {core,page}=await fixture(t);await core.goto(server.url+'/a');
+ assert.equal(page.listenerCount('filechooser'),0);
+ // The caller's own chooser is not intercepted by Jev.
+ const own=page.waitForEvent('filechooser');await page.click('#f');await own;
+ await assert.rejects(core.native({command:'file_upload',paths:[path]}),{code:'NO_FILE_CHOOSER'});
+ // A chooser opened by a Jev operation stays available to the next file_upload.
+ await core.native({command:'click',target:'#f'});assert.equal(page.listenerCount('filechooser'),0);
+ assert.equal((await core.native({command:'file_upload',paths:[path]})).count,1);
+ assert.equal(await page.locator('#f').evaluate(e=>e.files[0]?.name),'chooser.txt');
+});
+
+test('captureDialogs also holds caller-opened file choosers',async t=>{
+ const path=join(root,'held.txt');await writeFile(path,'held');
+ const {core,page}=await fixture(t,{captureDialogs:true});await core.goto(server.url+'/a');
+ assert.equal(page.listenerCount('filechooser'),1);
+ const opened=page.waitForEvent('filechooser');await page.click('#f');await opened;
+ assert.equal((await core.native({command:'file_upload',paths:[path]})).count,1);
+ await core.close();assert.equal(page.listenerCount('filechooser'),0);
+});

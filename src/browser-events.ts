@@ -47,9 +47,13 @@ export class BrowserEvents {
     const tracked: TrackedPage = {
       id: ++this.pageCount,
       navigation: 0,
-      // A dialog listener disables Playwright's default dismissal, so it exists only while Jev owns dialogs.
-      holdDialogs: hold => { if (hold === holding) return; holding = hold; if (hold) page.on('dialog', onDialog); else page.off('dialog', onDialog); },
-      detach: () => { tracked.holdDialogs(false); page.off('console', onConsole); page.off('pageerror', onError); page.off('request', onRequest); page.off('download', onDownload); page.off('filechooser', onChooser); page.off('framenavigated', onNavigation); page.off('close', onClose); },
+      // A dialog listener disables Playwright's default dismissal and a file chooser listener suppresses the native picker,
+      // so both exist only while Jev owns them. A chooser captured meanwhile stays available until its document navigates.
+      holdDialogs: hold => {
+        if (hold === holding) return; holding = hold;
+        if (hold) { page.on('dialog', onDialog); page.on('filechooser', onChooser); } else { page.off('dialog', onDialog); page.off('filechooser', onChooser); }
+      },
+      detach: () => { tracked.holdDialogs(false); page.off('console', onConsole); page.off('pageerror', onError); page.off('request', onRequest); page.off('download', onDownload); page.off('framenavigated', onNavigation); page.off('close', onClose); },
     };
     const onConsole = (m: ConsoleMessage) => push(this.messages, { type: m.type(), text: m.text(), url: publicURL(page.url()), pageId: tracked.id }, 500);
     const onError = (e: Error) => push(this.messages, { type: 'error', text: e.message, url: publicURL(page.url()), pageId: tracked.id }, 500);
@@ -60,12 +64,12 @@ export class BrowserEvents {
     // A chooser belongs to the document that opened it; downloads record which main-frame navigation they came from.
     const onNavigation = (frame: Frame) => { if (frame === page.mainFrame()) { tracked.navigation++; tracked.chooser = undefined; } };
     const onClose = () => { tracked.detach(); this.tracked.delete(page); };
-    page.on('console', onConsole); page.on('pageerror', onError); page.on('request', onRequest); page.on('download', onDownload); page.on('filechooser', onChooser); page.on('framenavigated', onNavigation); page.on('close', onClose);
+    page.on('console', onConsole); page.on('pageerror', onError); page.on('request', onRequest); page.on('download', onDownload); page.on('framenavigated', onNavigation); page.on('close', onClose);
     tracked.holdDialogs(this.holdsDialogs());
     this.tracked.set(page, tracked);
   }
   private holdsDialogs(): boolean { return this.options.captureDialogs === true || this.operating; }
-  /** Borrowed Pages keep Playwright's default dialog dismissal outside Jev operations unless captureDialogs is set. */
+  /** Borrowed Pages keep Playwright's default dialog and file chooser handling outside Jev operations unless captureDialogs is set. */
   operate(active: boolean): void {
     this.operating = active;
     for (const tracked of this.tracked.values()) tracked.holdDialogs(this.holdsDialogs());
