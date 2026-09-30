@@ -11,6 +11,8 @@
 - A pending `dialog` result now includes the `pageId` of the tab that opened it, matching `tabs` results.
 - `downloads` `list` entries now include `navigation`, the tab's navigation generation when the download started, so downloads from different documents of one tab can be told apart.
 - A core attached to a borrowed Page without `captureDialogs` no longer intercepts file choosers between its operations, so the caller's own chooser handling and a headed browser's native picker work as usual; choosers opened during a Jev operation are still held for `file_upload`.
+- A screenOnly session now recovers from a native dialog: it is reported once with `SCREEN_DIALOG_UNSUPPORTED` and dismissed, instead of failing every later screen call with `DIALOG_PENDING` until a restart.
+- A screenOnly session now recovers from a new tab opened by the page, such as a `target="_blank"` link: it is reported once with `SCREEN_POPUP_UNSUPPORTED` and closed, instead of failing every later screen call while the tab stays open.
 
 ## 0.12.2
 

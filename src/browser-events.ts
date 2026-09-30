@@ -121,6 +121,17 @@ export class BrowserEvents {
       return { status: 'executed' };
     } finally { this.dialogNotice = undefined; if (!this.dialog) this.pendingAction = undefined; }
   }
+  /** Dismisses held dialogs, including ones the resumed action opens next, for surfaces that cannot answer them. Returns whether any were held. */
+  async dismissDialogs(limit = 20): Promise<boolean> {
+    let dismissed = false;
+    for (let i = 0; i < limit && (this.dialog || this.pendingAction); i++) {
+      dismissed = true;
+      if (!this.dialog) { this.pendingAction = undefined; break; }
+      // A dialog of a closed page can no longer be answered; it must not keep blocking the session.
+      try { await this.handleDialog(false); } catch { this.dialog = undefined; this.pendingAction = undefined; }
+    }
+    return dismissed;
+  }
   protected async target(args: { target?: string; ref?: string; frame?: number }): Promise<Target> {
     const target = args.target ?? args.ref;
     if (!target) throw new BrowserError('INVALID_ARGUMENT', 'An element reference or selector is required.');

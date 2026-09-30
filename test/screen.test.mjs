@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {mkdtemp,readFile,readdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {setTimeout as delay} from 'node:timers/promises';
 import {JevBrowser} from '../dist/index.js';
 import {parseCommand,executeCommand} from '../dist/commands.js';
 import {fixtureBrowser,httpServer} from './helpers.mjs';
@@ -156,16 +157,17 @@ test('a crashed page is reported as the capture failure reason without suggestin
   assert.equal(error.code,'SCREEN_FAILED');assert.deepEqual(error.details,{reason:'page-crashed'});assert.equal(/reload/.test(error.message),false);return true;
  });
 });
-test('a native dialog that interrupts a capture is reported as its reason',async t=>{
- const {core,page}=await fixture(t);let fontRequested;const font=new Promise(resolve=>{fontRequested=resolve;});
- const s=await site(t,(req,res)=>{if(req.url==='/held.woff2'){fontRequested();return;}res.setHeader('content-type','text/html');res.end('<p>Visible</p>');});
+for(const screenOnly of [false,true])test('a native dialog that interrupts a capture is reported as its reason'+(screenOnly?', then dismissed in screen-only sessions':''),async t=>{
+ const {core,page}=await fixture(t,{screenOnly});let fontRequested;const font=new Promise(resolve=>{fontRequested=resolve;});
+ const s=await site(t,(req,res)=>{if(req.url==='/held.woff2'){fontRequested(res);return;}res.setHeader('content-type','text/html');res.end('<p>Visible</p>');});
  await page.goto(s.url);
  await page.evaluate(url=>{const face=new FontFace('held',`url("${url}/held.woff2")`);document.fonts.add(face);document.body.style.fontFamily='held';void face.load().catch(()=>{});},s.url);
- await font;
+ const held=await font;
  const pending=core.screen({action:'look'},{timeoutMs:1000}).catch(error=>error);
  await page.evaluate(()=>{setTimeout(()=>alert('PRIVATE_DIALOG'));});
  const error=await pending;
  assert.equal(error.code,'SCREEN_FAILED');assert.deepEqual(error.details,{reason:'dialog'});assert.equal(error.message.includes('PRIVATE_'),false);
+ if(screenOnly){held.statusCode=404;held.end();assert.equal((await core.screen({action:'look'})).frames.length,1);}
 });
 test('screen mode rejects ordinary dispatcher commands and does not change normal mode',async t=>{
  const {core}=await fixture(t,{screenOnly:true});
@@ -198,6 +200,46 @@ test('native dialogs and popup tabs are explicit tool limitations without hidden
    assert.equal(error.message.includes('PRIVATE_'),false);return true;
   });
  });
+});
+test('screen-only sessions report a native dialog or popup tab once, then recover on the same page',async t=>{
+ const cases=[
+  ['dialog from input','alert("PRIVATE_NATIVE_DIALOG");confirm("PRIVATE_SECOND_DIALOG");document.querySelector("h1").textContent="Resumed"','SCREEN_DIALOG_UNSUPPORTED',true],
+  ['popup from input','window.open("'+server.url+'")','SCREEN_POPUP_UNSUPPORTED',true],
+  ['dialog between operations','setTimeout(()=>alert("PRIVATE_LATE_DIALOG"),50)','SCREEN_DIALOG_UNSUPPORTED',false],
+  ['popup between operations','setTimeout(()=>window.open("'+server.url+'"),50)','SCREEN_POPUP_UNSUPPORTED',false],
+ ];
+ for(const [name,script,code,immediate] of cases)await t.test(name,async t=>{
+  const {core,page,context}=await fixture(t,{screenOnly:true,captureDialogs:true});
+  await page.locator('button').evaluate((button,script)=>button.setAttribute('onclick',script),script);
+  let seen=await core.screen({action:'look'});
+  const check=error=>{assert.equal(error.code,code);assert.equal(error.message.includes('PRIVATE_'),false);return true;};
+  if(immediate)await assert.rejects(core.screen({action:'click',x:70,y:100,observationId:seen.observationId}),check);
+  else{
+   seen=await core.screen({action:'click',x:70,y:100,observationId:seen.observationId});
+   if(code==='SCREEN_POPUP_UNSUPPORTED')await context.waitForEvent('page');else await delay(300);
+   await assert.rejects(core.screen({action:'look'}),check);
+  }
+  // Reported once: later observations continue on the same selected page with no pending dialog or extra tab.
+  seen=await core.screen({action:'look'});seen=await core.screen({action:'look'});
+  assert.equal(context.pages().length,1);assert.equal(core.page,page);assert.equal(page.isClosed(),false);
+  if(name==='dialog from input')assert.equal(await page.locator('h1').textContent(),'Resumed');
+  seen=await core.screen({action:'click',x:60,y:35,observationId:seen.observationId});
+  seen=await core.screen({action:'type',text:'Still usable',observationId:seen.observationId});
+  assert.equal(await page.locator('input').inputValue(),'Still usable');
+ });
+});
+test('sessions with ordinary tools keep dialogs and popup tabs for those tools',async t=>{
+ const {core,page,context}=await fixture(t,{captureDialogs:true});
+ await page.locator('button').evaluate(button=>button.setAttribute('onclick','window.open("'+location.href+'")'));
+ const seen=await core.screen({action:'look'});
+ await assert.rejects(core.screen({action:'click',x:70,y:100,observationId:seen.observationId}),{code:'SCREEN_POPUP_UNSUPPORTED'});
+ assert.equal(context.pages().length,2);
+ await assert.rejects(core.screen({action:'look'}),{code:'SCREEN_POPUP_UNSUPPORTED'});
+ await context.pages()[1].close();
+ await page.evaluate(()=>{setTimeout(()=>alert('PRIVATE_DIALOG'),0);});await delay(200);
+ await assert.rejects(core.screen({action:'look'}),{code:'DIALOG_PENDING'});
+ await executeCommand(core,parseCommand({command:'handle_dialog',accept:false}));
+ await core.screen({action:'look'});
 });
 test('invalid screen commands cannot inject selectors or privileged keyboard chords',async t=>{
  const {core,page}=await fixture(t);assert.equal(typeof core.screen,'function');
