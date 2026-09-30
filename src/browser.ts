@@ -1,13 +1,13 @@
 import { runGoal, type PendingCommitState, type RunSeed, type ResolvedInput } from './runner.js';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { chromium, firefox, webkit, type Page, type ElementHandle } from 'playwright';
+import { chromium, firefox, webkit, type Page } from 'playwright';
 import { z } from 'zod';
 import type { EntryType } from '@typesafe-ai/sdk';
 import { JevDecisionEngine, type DecisionEngine, type DecisionRequest } from './decision.js';
 import { BrowserError, browserError, diagnostic, launchError, obscuredTarget } from './errors.js';
 import { capture, publicURL, verifyTarget, currentSemanticEvidence, readLocatorEvidence, semanticWithinScope, captureComboboxChoice, captureRegions, verifyOwnedOption, assertScope, type Captured } from './observation.js';
-import { actionCandidates, actionDescription, modelElementId, inputBindings, modelElement, resolveSelectChoice } from './actions.js';
+import { actionCandidates, actionDescription, inputBindings, modelElement, resolveSelectChoice } from './actions.js';
 import { flattenInputs } from './bindings.js';
 import { extractStructured } from './structured.js';
 import { NativeBrowser } from './native.js';

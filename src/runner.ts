@@ -405,7 +405,7 @@ Input bindings listed in state.inputs are available locally, not missing. Their 
             if (!operation) return finish('stopped','missing-input');
             repeats.push({ ...entry, input, operation });
           }
-          for (const { input, operation, ref } of repeats) {
+          for (const { operation, ref } of repeats) {
             if (matchesControl(await readControl(ref),operation!.expected)) continue;
             if (steps.length >= maxSteps) return finish('stopped','step-limit');
             const result = await perform(operation!.action, observed, 'input', operation!.value);

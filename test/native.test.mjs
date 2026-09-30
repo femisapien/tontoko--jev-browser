@@ -1,6 +1,6 @@
 import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,writeFile,readFile,rm,mkdir,symlink} from 'node:fs/promises';
+import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {JevBrowser} from '../dist/index.js';

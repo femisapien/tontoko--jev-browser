@@ -14,9 +14,9 @@ function validateSchema(schema: z.ZodType, depth = 0): void {
   if (schema instanceof z.ZodDefault || schema instanceof z.ZodCatch || schema instanceof z.ZodPipe)
     throw new BrowserError('UNSUPPORTED_SCHEMA', 'Extraction cannot synthesize defaults, fallback values or transforms.');
   const inner = unwrapped(schema);
-  if (inner !== schema) return validateSchema(inner, depth + 1);
+  if (inner !== schema) { validateSchema(inner, depth + 1); return; }
   if (inner instanceof z.ZodObject) { for (const field of Object.values(inner.shape)) validateSchema(field as z.ZodType, depth + 1); return; }
-  if (inner instanceof z.ZodArray) return validateSchema(inner.element as z.ZodType, depth + 1);
+  if (inner instanceof z.ZodArray) { validateSchema(inner.element as z.ZodType, depth + 1); return; }
   try { z.toJSONSchema(inner); } catch { throw new BrowserError('UNSUPPORTED_SCHEMA', 'Schema must describe observed JSON values.'); }
 }
 /** Shapes data without inventing it. Every array item comes from a single observed DOM record. */
