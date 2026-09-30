@@ -8,7 +8,7 @@ import { executeCommand, parseCommand } from './commands.js';
 import { BrowserError, publicError } from './errors.js';
 import type { BrowserLaunchOptions } from './types.js';
 
-interface Start { name: string; directory: string; options: BrowserLaunchOptions; url?: string; idleTimeoutMs: number }
+interface Start { name: string; directory: string; options: BrowserLaunchOptions; optionsHash: string; url?: string; idleTimeoutMs: number }
 process.once('message', async (input: Start) => {
   let core: JevBrowser | undefined, server: Server | undefined, idle: NodeJS.Timeout | undefined;
   let closing: Promise<void> | undefined;
@@ -63,7 +63,7 @@ process.once('message', async (input: Start) => {
     await new Promise<void>((resolve, reject) => { server!.once('error', reject); server!.listen(0, '127.0.0.1', resolve); });
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Missing local listener');
-    await writeFile(join(input.directory, 'session.json'), JSON.stringify({ name: input.name, cwd: resolve(process.cwd()), pid: process.pid, port: address.port, token, createdAt: new Date().toISOString() }), { mode: 0o600, flag: 'wx' });
+    await writeFile(join(input.directory, 'session.json'), JSON.stringify({ name: input.name, cwd: resolve(process.cwd()), pid: process.pid, port: address.port, token, createdAt: new Date().toISOString(), optionsHash: input.optionsHash }), { mode: 0o600, flag: 'wx' });
     touch();
     process.send?.({ ready: true, ...(core.screenOnly ? { screenOnly: true } : { url: publicURL(core.page.url()) }) });
   } catch (error) {

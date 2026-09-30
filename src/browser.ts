@@ -135,7 +135,11 @@ export class JevBrowser {
       : type.launch({ headless: options.headless ?? true, ...options.launchOptions }));
     try {
       const attached = !!(options.cdpEndpoint || options.wsEndpoint);
-      const context = attached && browser.contexts()[0] || await browser.newContext(contextOptions);
+      const existing = attached ? browser.contexts()[0] : undefined;
+      // An existing remote context was created with its own options; Playwright cannot apply new ones to it.
+      if (existing && Object.values(contextOptions).some(value => value !== undefined))
+        throw new BrowserError('CONFIG', 'contextOptions and storageState cannot be applied to an existing browser context reached through cdpEndpoint or wsEndpoint. Remove them, or launch a new browser.');
+      const context = existing ?? await browser.newContext(contextOptions);
       const page = attached && context.pages()[0] || await context.newPage();
       const core = new JevBrowser({ ...options, captureDialogs: options.captureDialogs ?? true, page });
       // Playwright disconnects a connected Browser; borrowed remote pages are not individually closed.

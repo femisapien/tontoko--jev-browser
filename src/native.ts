@@ -34,7 +34,7 @@ export class NativeBrowser extends BrowserEvents {
         case 'type': if (c.slowly) { await target.fill('',time); await target.type(c.text,{...time,delay:30}); } else await target.fill(c.text,time); if(c.submit)await target.press('Enter',time); break;
         case 'press_key': await target.press(c.key,time); break;
         case 'check': await target.setChecked(c.checked,time); break;
-        case 'select_option': await target.selectOption(c.indices ? c.indices.map(index=>({index})) : c.by==='label' ? c.values!.map(label=>({label})) : c.values!,time); break;
+        case 'select_option': await target.selectOption(c.indices ? c.indices.map(index=>({index})) : c.by==='label' ? c.values!.map(label=>({label})) : c.by==='value' ? c.values!.map(value=>({value})) : c.values!,time); break;
         default: throw new BrowserError('INVALID_ARGUMENT','This command is not an element primitive.');
       }
     });

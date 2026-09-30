@@ -8,7 +8,17 @@ import { BrowserError, type BrowserErrorCode, type PublicError } from './errors.
 import type { BrowserLaunchOptions } from './types.js';
 import type { Command } from './commands.js';
 
-export const descriptorSchema = z.object({ name: z.string(), cwd: z.string(), pid: z.number().int().positive(), port: z.number().int().min(1).max(65535), token: z.string().regex(/^[0-9a-f]{64}$/), createdAt: z.string() });
+export const descriptorSchema = z.object({ name: z.string(), cwd: z.string(), pid: z.number().int().positive(), port: z.number().int().min(1).max(65535), token: z.string().regex(/^[0-9a-f]{64}$/), createdAt: z.string(), optionsHash: z.string().regex(/^[0-9a-f]{64}$/).optional() });
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined && typeof v !== 'function').sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, v]) => [k, canonical(v)]));
+  return value;
+}
+/** Everything a session worker fixes at start. The API key is excluded so rotating it does not strand a session. */
+export function launchOptionsHash(options: BrowserLaunchOptions): string {
+  const { apiKey: _apiKey, ...fixed } = options;
+  return createHash('sha256').update(JSON.stringify(canonical(fixed))).digest('hex');
+}
 export function sessionRoot(): string { return resolve(process.env.JEV_SESSION_DIR ?? join(tmpdir(), `jev-browser-${process.getuid?.() ?? 'user'}`)); }
 export function sessionDirectory(name: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(name)) throw new BrowserError('INVALID_ARGUMENT', 'Session names must be 1–64 letters, digits, underscores or hyphens.');
@@ -63,6 +73,9 @@ export async function openSession(name: string, options: BrowserLaunchOptions, u
     const existing = await sendSession(name, { command: 'health' });
     if ((existing.screenOnly === true) !== (options.screenOnly === true))
       throw new BrowserError('SESSION_MODE_MISMATCH', 'An existing session cannot change screen-only mode. Use a different session name.');
+    // Descriptors written before launch options were recorded carry no hash; only screen-only mode can be compared for them.
+    if (previous.optionsHash !== undefined && previous.optionsHash !== launchOptionsHash(options))
+      throw new BrowserError('SESSION_MODE_MISMATCH', `Session ${name} is already open with different launch options, which are fixed when a session starts. Repeat the original options, close the session first, or use a different session name.`);
     if (existing.screenOnly === true && url)
       throw new BrowserError('SCREEN_ONLY', 'A screen-only session cannot be reopened at a supplied URL. Continue with screen, or start a new session.');
     if (url) await sendSession(name, { command: 'goto', url });
@@ -85,7 +98,7 @@ export async function openSession(name: string, options: BrowserLaunchOptions, u
       settled = true; clearTimeout(timer); child.disconnect(); child.unref();
       resolve({ session: name, status: 'open', ...(result.screenOnly ? { screenOnly: true } : { url: result.url }), reused: false });
     });
-    child.send({ name, directory, options, url, idleTimeoutMs });
+    child.send({ name, directory, options, optionsHash: launchOptionsHash(options), url, idleTimeoutMs });
   });
 }
 export async function listSessions(): Promise<{ sessions: { name: string; cwd: string; pid: number; createdAt: string }[] }> {

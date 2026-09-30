@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Breaking: `playwright-core` (`>=1.62.0 <2`) and `zod` (`^4.2.0`) are now peer dependencies instead of bundled `playwright` and `zod` copies, so the package shares your project's Playwright and Zod; an older `playwright-core` fails with `CONFIG`. Yarn Berry users must add them explicitly. See `docs/migration.md`.
+- Breaking: native `select_option` with `by: 'value'` now matches option values exactly instead of value or label; omit `by` to keep matching either. A value with no matching option fails with `TIMEOUT` when the operation budget ends. See `docs/migration.md`.
+- Breaking: `open` of an existing named session with different launch options (browser, headless, context options, storage state, profile, endpoints, limits, timeouts, file roots and other flags fixed at start) now fails with `SESSION_MODE_MISMATCH` instead of silently keeping the original options. See `docs/migration.md`.
+- Breaking: `cdpEndpoint` or `wsEndpoint` with `contextOptions` or `storageState` now fails with `CONFIG` when the attached browser already has a context, instead of silently ignoring them. See `docs/migration.md`.
 - Row, list, form and record context strings sent to the decision endpoint no longer include text typed into `contenteditable` editors, `<textarea>`/`<input>` controls or native `<select>` option labels; element names and labels are kept.
 - An empty or whitespace-only `JEV_MODEL` or `--model ""` now counts as unset, like the other decision settings, instead of sending an empty model name.
 - `run()` and `resume()` (CLI `run`/`resume`, MCP `browser_run`/`browser_resume`) reject an unparsable `scope` with `INVALID_SELECTOR` before observing, instead of `RUN_FAILED`.

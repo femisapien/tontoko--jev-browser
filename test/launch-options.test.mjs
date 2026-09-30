@@ -9,7 +9,10 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { parseCLI } from '../dist/cli-options.js';
+import { JevBrowser } from '../dist/index.js';
 import { httpServer } from './helpers.mjs';
+import { chromium } from 'playwright';
+import { createServer } from 'node:net';
 
 const cliFile = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 // The page reports the context it was given, so tests read emulation results through ordinary snapshots.
@@ -92,6 +95,41 @@ test('a named CLI session keeps the context options it was opened with', async t
   const snapshot = await cli(['snapshot', '--session', session]);
   assert.equal(snapshot.code, 0, snapshot.stdout);
   assert.equal(reported(JSON.parse(snapshot.stdout).result), '640x480 motion light de-DE');
+});
+
+test('reopening a named CLI session with different launch options is a mode mismatch', async t => {
+  const session = 'hash-' + randomUUID().slice(0, 8);
+  t.after(() => cli(['close', '--session', session]));
+  const opened = await cli(['open', site.url, '--session', session, '--viewport', '640x480']);
+  assert.equal(opened.code, 0, opened.stdout + opened.stderr);
+  const same = await cli(['open', '--session', session, '--viewport', '640x480']);
+  assert.equal(same.code, 0, same.stdout + same.stderr); assert.equal(JSON.parse(same.stdout).result.reused, true);
+  for (const flags of [['--viewport', '800x600'], [], ['--locale', 'fr-FR', '--viewport', '640x480'], ['--viewport', '640x480', '--headed']]) {
+    const changed = await cli(['open', site.url, '--session', session, ...flags]);
+    assert.equal(changed.code, 1, flags.join(' ')); assert.equal(JSON.parse(changed.stdout).error.code, 'SESSION_MODE_MISMATCH', changed.stdout);
+  }
+  // The existing session is untouched: it keeps its original context.
+  const snapshot = await cli(['snapshot', '--session', session]);
+  assert.match(reported(JSON.parse(snapshot.stdout).result), /^640x480 /);
+});
+
+async function freePort() {
+  const server = createServer(); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address(); await new Promise(resolve => server.close(resolve)); return port;
+}
+test('attaching over CDP to an existing context rejects context options instead of ignoring them', async t => {
+  if ((process.env.JEV_BROWSER ?? 'chromium') !== 'chromium') { t.skip('CDP requires Chromium'); return; }
+  const port = await freePort();
+  const remote = await chromium.launch({ headless: true, args: [`--remote-debugging-port=${port}`] });
+  t.after(() => remote.close());
+  const cdpEndpoint = `http://127.0.0.1:${port}`;
+  for (const options of [{ contextOptions: { viewport: { width: 390, height: 844 } } }, { storageState: { cookies: [], origins: [] } }]) {
+    await assert.rejects(JevBrowser.launch({ cdpEndpoint, ...options }), error => error.code === 'CONFIG' && /existing browser context/.test(error.message), JSON.stringify(options));
+  }
+  // Without context options, attaching still borrows the existing context.
+  const core = await JevBrowser.launch({ cdpEndpoint });
+  await core.close();
+  assert.equal(remote.isConnected(), true);
 });
 
 test('the MCP stdio server launches its lazy browser with CLI context options', async t => {
