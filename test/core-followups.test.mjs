@@ -42,3 +42,10 @@ test('an empty or blank model setting is unset, like the other decision settings
  const [fallback,...rest]=models;assert.ok(fallback);
  assert.deepEqual(rest,['env-model','env-model',fallback,'pinned']);
 });
+
+test('run rejects invalid scope syntax as INVALID_SELECTOR before observing or asking a model',async t=>{
+ const decider=engine(()=>'__none__');
+ const {core,page}=await fixture(t,{engine:decider});await page.setContent('<button>Save</button>');
+ const error=await core.run('Click Save',{scope:'div['}).then(()=>assert.fail('run resolved'),error=>error);
+ assert.equal(error.code,'INVALID_SELECTOR');assert.equal(error.partial,undefined);assert.equal(decider.requests.length,0);
+});

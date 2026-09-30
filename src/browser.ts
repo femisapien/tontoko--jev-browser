@@ -7,7 +7,7 @@ import type { EntryType } from '@typesafe-ai/sdk';
 import { JevDecisionEngine, type DecisionEngine, type DecisionRequest } from './decision.js';
 import { assertPlaywrightCore } from './playwright-core-version.js';
 import { BrowserError, browserError, diagnostic, launchError, obscuredTarget } from './errors.js';
-import { capture, publicURL, verifyTarget, currentSemanticEvidence, readLocatorEvidence, semanticWithinScope, captureComboboxChoice, captureRegions, verifyOwnedOption, assertScope, type Captured } from './observation.js';
+import { capture, publicURL, verifyTarget, currentSemanticEvidence, readLocatorEvidence, semanticWithinScope, captureComboboxChoice, captureRegions, verifyOwnedOption, assertScope, validateScopeSyntax, type Captured } from './observation.js';
 import { actionCandidates, actionDescription, inputBindings, modelElement, resolveSelectChoice } from './actions.js';
 import { flattenInputs } from './bindings.js';
 import { extractStructured } from './structured.js';
@@ -489,8 +489,10 @@ export class JevBrowser {
   async run(instruction: string, options: RunOptions = {}): Promise<RunResult> {
     this.validateRunOptions(options);
     options={...this.storedRunOptions(options),...(options.signal?{signal:options.signal}:{})};
-    return this.exclusive({ ...options, timeoutMs: options.timeoutMs ?? this.options.timeoutMs ?? 60_000 }, async operation =>
-      this.attachContinuation(await this.executeGoal(operation,instruction,options),instruction,options));
+    return this.exclusive({ ...options, timeoutMs: options.timeoutMs ?? this.options.timeoutMs ?? 60_000 }, async operation => {
+      await validateScopeSyntax(this.page,options.scope);
+      return this.attachContinuation(await this.executeGoal(operation,instruction,options),instruction,options);
+    });
   }
   async resume(continuationId: string, options: ResumeOptions = {}): Promise<RunResult> {
     if(!continuationId.trim())throw new BrowserError('INVALID_ARGUMENT','A continuation ID is required.');
@@ -503,6 +505,7 @@ export class JevBrowser {
     const values=mergeRunValues(state.options.values??{},options.values??{});
     const runOptions:RunOptions={...state.options,values,...(options.scope!==undefined?{scope:options.scope}:{}),...(options.timeoutMs!==undefined?{timeoutMs:options.timeoutMs}:{}),...(options.signal?{signal:options.signal}:{})};
     return this.exclusive({...options,timeoutMs:options.timeoutMs??state.options.timeoutMs??this.options.timeoutMs??60_000},async operation=>{
+      await validateScopeSyntax(this.page,runOptions.scope);
       if(state.carried){
         const observed=await capture(this.page,{...this.limits,scope:state.options.scope,signal:operation.signal,deadline:operation.deadline});
         try{if(state.carried.context!==JSON.stringify([observed.rawURL,observed.changeKeys]))
