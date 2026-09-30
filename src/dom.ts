@@ -117,7 +117,7 @@ export function progressChanged(previous?: string): string | boolean {
 }
 const actionableRoles = new Set(['button','link','textbox','searchbox','checkbox','radio','switch','combobox','listbox','menuitem','menuitemcheckbox','menuitemradio','tab','option']);
 export type SemanticTextKind = 'text' | 'href' | 'checked';
-export function observe(options: { maxElements: number; maxTexts: number }, scopedRoots?: Element[], explicitRecords?: Element[]) {
+export function observe(options: { maxElements: number; maxTexts: number }, scopedRoots?: Element[], explicitRecords?: Element[], excludedRoots?: Element[]) {
   const nodes: Element[] = [];
   const elements: ReturnType<typeof describe>[] = [];
   const texts: { text: string; context: string; role: string; value?: boolean; attribute?: string; truncated?: boolean }[] = [];
@@ -131,6 +131,8 @@ export function observe(options: { maxElements: number; maxTexts: number }, scop
     const candidates = root instanceof Element ? [root, ...root.querySelectorAll('*')] : Array.from(root.querySelectorAll('*'));
     for (const el of candidates) {
       if (visited.has(el)) continue;
+      // Caller-excluded subtrees, including shadow content under an excluded host, are never observed or recorded.
+      if (excludedRoots?.length && withinSemanticRoots(el, excludedRoots)) continue;
       visited.add(el);
       if (++scanned > 6000) { truncatedElements = true; truncatedTexts = true; break; }
       if (el.shadowRoot) roots.push(el.shadowRoot);

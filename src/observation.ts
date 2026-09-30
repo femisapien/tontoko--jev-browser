@@ -20,7 +20,17 @@ export interface Captured {
   changeKeys: Record<number, string>;
   dispose(): Promise<void>;
 }
-interface CaptureOptions { signal?: AbortSignal; deadline?: number; semanticRefs?: boolean; scope?: string; requireScope?: boolean; recordsScope?: string; maxElements: number; maxTexts: number; selection?: {frame:Frame;roots:ElementHandle<Element>[]} }
+/** A resolved caller ref used as an observation root. The handle is owned by the caller and stays valid for the operation. */
+export interface ScopeRoot { frame: Frame; handle: ElementHandle<Element> }
+/** A CSS selector evaluated in every frame, or one current element in its own frame. */
+export type Scope = string | ScopeRoot;
+/** Fresh handles for the scope roots in one frame; the caller disposes them. */
+export async function scopeHandles(frame: Frame, scope: Scope): Promise<ElementHandle<Element>[]> {
+  if (typeof scope === 'string') return await frame.locator(`css=${scope}`).elementHandles() as ElementHandle<Element>[];
+  if (scope.frame !== frame) return [];
+  return [await scope.handle.evaluateHandle(element => element) as ElementHandle<Element>];
+}
+interface CaptureOptions { signal?: AbortSignal; deadline?: number; semanticRefs?: boolean; scope?: Scope; requireScope?: boolean; recordsScope?: string; exclude?: string[]; maxElements: number; maxTexts: number; selection?: {frame:Frame;roots:ElementHandle<Element>[]} }
 // Playwright reports these when a frame is removed, or its document replaced, during an evaluation.
 const detachedFrame = /Frame (?:was|has been) detached/;
 const replacedDocument = (error: unknown) => error instanceof BrowserError ? error.code === 'STALE_SNAPSHOT' : error instanceof Error && /Execution context was destroyed/.test(error.message);
@@ -56,15 +66,16 @@ async function captureOnce(page: Page, options: CaptureOptions): Promise<Capture
   try {
     // Read a frame completely before recording it, so a frame removed mid-read leaves no partial evidence.
     const observeFrame = async (frameIndex: number, frame: Frame) => {
-      const {selection,signal:_signal,deadline:_deadline,...ordinaryOptions}=options;
-      const frameOptions = { ...ordinaryOptions, maxElements: Math.max(0, options.maxElements - data.elements.length), maxTexts: Math.max(0, options.maxTexts - data.texts.length) };
+      const frameOptions = { maxElements: Math.max(0, options.maxElements - data.elements.length), maxTexts: Math.max(0, options.maxTexts - data.texts.length) };
       // Use Playwright's native CSS resolver, including open shadow roots.
-      const roots = options.selection?.roots ?? (options.scope ? (await frame.locator(`css=${options.scope}`).elementHandles()) as ElementHandle<Element>[] : undefined);
+      const roots = options.selection?.roots ?? (options.scope ? await scopeHandles(frame, options.scope) : undefined);
       if (roots && !options.selection) owned.push(...roots);
       const recordRoots = options.recordsScope ? (await frame.locator(`css=${options.recordsScope}`).elementHandles()) as ElementHandle<Element>[] : undefined;
       if (recordRoots) owned.push(...recordRoots);
-      const observe = new Function('args', `${source()}; return JevDOM.observe(${JSON.stringify(frameOptions)}, args.roots, args.recordRoots);`) as (args: { roots?: Element[]; recordRoots?: Element[] }) => ReturnType<typeof DOM.observe>;
-      const result = await frame.evaluateHandle(observe, { roots, recordRoots });
+      const excluded = options.exclude?.length ? (await Promise.all(options.exclude.map(selector => frame.locator(`css=${selector}`).elementHandles()))).flat() as ElementHandle<Element>[] : undefined;
+      if (excluded) owned.push(...excluded);
+      const observe = new Function('args', `${source()}; return JevDOM.observe(${JSON.stringify(frameOptions)}, args.roots, args.recordRoots, args.excluded);`) as (args: { roots?: Element[]; recordRoots?: Element[]; excluded?: Element[] }) => ReturnType<typeof DOM.observe>;
+      const result = await frame.evaluateHandle(observe, { roots, recordRoots, excluded });
       owned.push(result);
       const observed = await result.evaluate(r => ({ elements: r.elements, texts: r.texts, textKinds:r.textKinds, records: r.records, recordInventoryComplete:r.recordInventoryComplete, busy: r.busy, changeKey: r.changeKey, truncatedElements: r.truncatedElements, truncatedTexts: r.truncatedTexts }));
       const nodes = await result.getProperty('nodes'); owned.push(nodes);
@@ -114,8 +125,9 @@ async function captureOnce(page: Page, options: CaptureOptions): Promise<Capture
   } catch (error) { await dispose(); throw error; }
 }
 /** An explicit caller scope that matches nothing in any frame is an error, never an empty observation. */
-export async function assertScope(page: Page, scope: string | undefined): Promise<void> {
-  if (!scope) return;
+export async function assertScope(page: Page, scope: Scope | undefined): Promise<void> {
+  // A ref scope was verified as current when it was resolved.
+  if (!scope || typeof scope !== 'string') return;
   for (const frame of page.frames()) if (await frame.locator(`css=${scope}`).count()) return;
   throw new BrowserError('SCOPE_NOT_FOUND', 'The observation scope matched no element. Check the selector, or wait for that region to appear.');
 }
@@ -202,7 +214,7 @@ export async function verifyOwnedOption(control:ElementRef,option:ElementRef):Pr
 }
 
 /** Re-read the same observed source rather than a same-position replacement. */
-export async function currentSemanticEvidence(page: Page, captured: Captured, evidence: SemanticEvidence, scope?:string): Promise<SemanticEvidence | undefined> {
+export async function currentSemanticEvidence(page: Page, captured: Captured, evidence: SemanticEvidence, scope?:Scope): Promise<SemanticEvidence | undefined> {
   if (page.url() !== captured.rawURL) return;
   const element = captured.refs.get(evidence.sourceId);
   const text = captured.textRefs?.get(evidence.sourceId);
@@ -223,7 +235,7 @@ export async function currentSemanticEvidence(page: Page, captured: Captured, ev
 
 export interface LocatorEvidence { evidence: SemanticEvidence; frame: Frame; frameURL: string; rawURL: string }
 export async function readLocatorEvidence(page:Page,locator:Locator,property:SemanticLocatorProperty,attribute:string|undefined,sourceId:string,
-  options:{scope?:string;signal:AbortSignal;timeoutMs:number;current?:boolean}):Promise<LocatorEvidence> {
+  options:{scope?:Scope;signal:AbortSignal;timeoutMs:number;current?:boolean}):Promise<LocatorEvidence> {
   options.signal.throwIfAborted();
   if(!locator || typeof locator.page!=='function' || typeof locator.elementHandle!=='function' || locator.page()!==page)
     throw new BrowserError('INVALID_ARGUMENT','The semantic Locator must belong to this Page.');
@@ -240,7 +252,7 @@ export async function readLocatorEvidence(page:Page,locator:Locator,property:Sem
     const frame=await handle.ownerFrame();
     if(!frame||page.url()!==rawURL)throw new BrowserError('STALE_TARGET','The semantic Locator page changed during observation.');
     const frameURL=frame.url();
-    if(options.scope)roots.push(...await frame.locator(`css=${options.scope}`).elementHandles() as ElementHandle<Element>[]);
+    if(options.scope)roots.push(...await scopeHandles(frame,options.scope));
     const read=new Function('element','args',`${source()}; return JevDOM.readLocatorValue(element,args);`) as (element:Element,args:{property:string;attribute?:string;roots?:Element[]})=>ReturnType<typeof DOM.readLocatorValue>;
     const value=await handle.evaluate(read,{property,attribute,...(options.scope?{roots}:{})});
     options.signal.throwIfAborted();
@@ -251,9 +263,9 @@ export async function readLocatorEvidence(page:Page,locator:Locator,property:Sem
   }finally{await Promise.allSettled([...(handle?[handle]:[]),...roots].map(node=>node.dispose()));}
 }
 
-export async function semanticWithinScope(ref:{frame:Frame;handle:ElementHandle<Element>},scope?:string):Promise<boolean> {
+export async function semanticWithinScope(ref:{frame:Frame;handle:ElementHandle<Element>},scope?:Scope):Promise<boolean> {
   if(!scope)return true;
-  const roots=await ref.frame.locator(`css=${scope}`).elementHandles() as ElementHandle<Element>[];
+  const roots=await scopeHandles(ref.frame,scope);
   try{
     const check=new Function('element','roots',`${source()}; return element.isConnected && JevDOM.withinSemanticRoots(element,roots);`) as (element:Element,roots:Element[])=>boolean;
     return await ref.handle.evaluate(check,roots);

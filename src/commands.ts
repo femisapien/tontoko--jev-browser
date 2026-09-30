@@ -7,7 +7,16 @@ import { invalidScreenRequest, screenSchema } from './screen.js';
 // Node timers overflow above 2147483647 ms; the CLI applies the same bound to its integer options.
 const positiveInteger = z.number().int().positive().max(2_147_483_647);
 const timeoutMs = positiveInteger.optional().describe('Operation budget in milliseconds; running out fails with TIMEOUT.');
-const scope = z.string().min(1).optional().describe('CSS selector limiting observation. Fails with SCOPE_NOT_FOUND when it matches no element.');
+const scope = z.string().min(1).optional().describe('CSS selector, or a current snapshot/semantic_locate ref, limiting observation. Fails with SCOPE_NOT_FOUND when a selector matches no element, STALE_TARGET when the ref expired.');
+const cssScope = z.string().min(1).optional();
+// Per-call observation settings: optional plain properties, so tool schemas keep a single object shape.
+const observation = {
+  maxElements: positiveInteger.optional().describe('Most controls observed in this call (default: session limit, 120). Values above 1000 are clamped.'),
+  maxTexts: positiveInteger.optional().describe('Most text sources observed in this call (default: session limit, 160). Values above 2000 are clamped.'),
+  maxCandidates: positiveInteger.optional().describe('Most action, extraction or semantic candidates in this call (default: session limit, 250). Values above 2000 are clamped.'),
+  exclude: z.array(z.string().min(1)).max(64).optional().describe('CSS selectors whose subtrees, including open shadow content, are left out of this observation, such as ads or navigation.'),
+};
+export const observationKeys = ['maxElements', 'maxTexts', 'maxCandidates', 'exclude'] as const;
 const instruction = z.string().trim().min(1);
 const values = z.record(z.string().min(1), z.string()).optional().describe('Named literal inputs, referred to by name in instruction. Values are withheld from Jev.');
 const runValues = z.record(z.string(),z.json()).optional();
@@ -19,37 +28,37 @@ const minSourceConfidence = confidence.describe('Required source-binding confide
 const semanticActual = z.union([z.object({ description: instruction.describe('Page value in words, bound to one observed source.') }).strict(), z.object({ ref: z.string().min(1).describe('Current snapshot or semantic_locate ref.') }).strict()]).describe('Actual page value: {description} or {ref}.');
 const expected = z.string().min(1).describe('Expected meaning in words. Sent to Jev unless an exact local match settles it.');
 const semanticRequest = z.object({ actual: semanticActual, expected, minConfidence, minSourceConfidence }).strict();
-const semanticBatch = z.object({ requests: z.array(semanticRequest).min(1).describe('Independent actual/expected pairs; item thresholds override the shared ones.'), minConfidence, minSourceConfidence, scope, timeoutMs }).strict();
+const semanticBatch = z.object({ requests: z.array(semanticRequest).min(1).describe('Independent actual/expected pairs; item thresholds override the shared ones.'), minConfidence, minSourceConfidence, scope, timeoutMs, ...observation }).strict();
 export const commandSchemas = {
   ...nativeSchemas,
   screen: screenSchema,
   goto: z.object({ url: z.url().describe('Absolute HTTP(S) URL.') }).strict(),
-  snapshot: z.object({ scope }).strict(),
-  observe: z.object({ instruction: instruction.describe('One action to plan, e.g. click Save.'), values, scope }).strict(),
-  act: z.object({ instruction: instruction.optional().describe('One action to perform. Provide exactly one of instruction or planId.'), planId: z.string().min(1).optional().describe('Single-use plan id from browser_observe. Provide exactly one of instruction or planId.'), values, scope }).strict()
+  snapshot: z.object({ scope, ...observation }).strict(),
+  observe: z.object({ instruction: instruction.describe('One action to plan, e.g. click Save.'), values, scope, ...observation }).strict(),
+  act: z.object({ instruction: instruction.optional().describe('One action to perform. Provide exactly one of instruction or planId.'), planId: z.string().min(1).optional().describe('Single-use plan id from browser_observe. Provide exactly one of instruction or planId.'), values, scope, ...observation }).strict()
     .refine(v => Number(v.instruction !== undefined) + Number(v.planId !== undefined) === 1, { message: 'Provide exactly one of instruction or planId.' }),
   extract: z.object({
     instruction: instruction.describe('What to copy from the page.'),
     fields: z.record(z.string().min(1), field).optional().describe('Output field name to scalar type, or {type, description, nullable}. Provide exactly one of fields or schema.'),
     schema: z.record(z.string(), z.unknown()).optional().describe('JSON Schema for nested objects and arrays of observed records. Provide exactly one of fields or schema.'),
-    scope, recordsScope: z.string().min(1).optional().describe('CSS selector matching each repeated record, such as a table row or card.'),
+    scope, recordsScope: z.string().min(1).optional().describe('CSS selector matching each repeated record, such as a table row or card.'), ...observation,
   }).strict()
     .refine(v => Number(v.fields !== undefined) + Number(v.schema !== undefined) === 1, { message: 'Provide exactly one of fields or schema (JSON Schema).' }),
-  semantic_locate: z.object({ description: instruction.describe('The one element to find, in words. Sent to Jev.'), minConfidence, scope }).strict(),
-  semantic_locate_batch: z.object({ descriptions: z.array(instruction).min(1).describe('Independent element descriptions; one target is returned per item.'), minConfidence, scope }).strict(),
-  semantic_compare: z.object({ actual: semanticActual, expected, minConfidence, minSourceConfidence, scope }).strict(),
-  semantic_assert: z.object({ actual: semanticActual, expected, minConfidence, minSourceConfidence, scope }).strict(),
+  semantic_locate: z.object({ description: instruction.describe('The one element to find, in words. Sent to Jev.'), minConfidence, scope, ...observation }).strict(),
+  semantic_locate_batch: z.object({ descriptions: z.array(instruction).min(1).describe('Independent element descriptions; one target is returned per item.'), minConfidence, scope, ...observation }).strict(),
+  semantic_compare: z.object({ actual: semanticActual, expected, minConfidence, minSourceConfidence, scope, ...observation }).strict(),
+  semantic_assert: z.object({ actual: semanticActual, expected, minConfidence, minSourceConfidence, scope, ...observation }).strict(),
   semantic_compare_batch: semanticBatch,
   semantic_assert_batch: semanticBatch,
   run: z.object({
     instruction: instruction.describe('Goal to complete, e.g. add a contact and save it.'),
     values: runValues.describe('Nested JSON inputs, reported by JSON Pointer path. Values are withheld from Jev unless listed in semanticInputs.'),
     semanticInputs: z.record(z.string().regex(/^\/(?:[^~]|~[01])*$/),z.number().min(0).max(1)).optional().describe('JSON Pointer of a supplied value to a 0-1 threshold. Discloses that value so Jev may match it to differently worded options.'),
-    scope: scope.describe('CSS selector limiting observation. Unlike browser_act, a scope matching nothing does not fail with SCOPE_NOT_FOUND.'), maxSteps: positiveInteger.optional().describe('Browser action budget (default 100).'), maxDecisions: positiveInteger.optional().describe('Decision request budget (default 32).'),
+    scope: cssScope.describe('CSS selector limiting observation; refs are not accepted. Unlike browser_act, a scope matching nothing does not fail with SCOPE_NOT_FOUND.'), maxSteps: positiveInteger.optional().describe('Browser action budget (default 100).'), maxDecisions: positiveInteger.optional().describe('Decision request budget (default 32).'),
     decisionRetries: z.number().int().min(0).max(2).optional().describe('Retries per read-only decision request (default 2).'), settleTimeoutMs: positiveInteger.optional().describe('Longest wait for the page to settle after an action (default 2000).'), timeoutMs,
-    expect: z.union([nativeSchemas.assert,z.array(nativeSchemas.assert).min(1)]).optional().describe('browser_assert conditions that must pass for a verified completion.'),
+    expect: z.union([nativeSchemas.assert,z.array(nativeSchemas.assert).min(1)]).optional().describe('browser_assert conditions that must pass for a verified completion.'), ...observation,
   }).strict(),
-  resume: z.object({ continuationId: z.string().min(1).describe('continuation.id from a stopped browser_run or browser_resume result.'), values: runValues.describe('Additional nested inputs; supplied values cannot change.'), scope: scope.describe('Must equal the original run scope when given.'), timeoutMs }).strict(),
+  resume: z.object({ continuationId: z.string().min(1).describe('continuation.id from a stopped browser_run or browser_resume result.'), values: runValues.describe('Additional nested inputs; supplied values cannot change.'), scope: cssScope.describe('Must equal the original run scope when given.'), timeoutMs }).strict(),
   screenshot: z.object({}).strict(),
   close: z.object({}).strict(),
 };
@@ -107,7 +116,8 @@ export async function executeCommand(browser: JevBrowser, request: Command, sign
     try { await browser.recordScreenDenied(request.command); } catch { /* Recording cannot authorize a forbidden command. */ }
     throw new BrowserError('SCREEN_ONLY', 'This session accepts only screen operations and close.');
   }
-  const options = { signal, ...('scope' in request ? { scope: request.scope } : {}), ...(request.command==='act'||request.command==='observe'?{values:request.values}:{}) };
+  const options = { signal, ...('scope' in request ? { scope: request.scope } : {}), ...(request.command==='act'||request.command==='observe'?{values:request.values}:{}),
+    ...Object.fromEntries(observationKeys.flatMap(key => key in request && (request as Record<string, unknown>)[key] !== undefined ? [[key, (request as Record<string, unknown>)[key]]] : [])) };
   switch (request.command) {
     case 'screen': { const { command, ...screen } = request; return browser.screen(screen, { signal }); }
     case 'goto': return browser.goto(request.url, options);

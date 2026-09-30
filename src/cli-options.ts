@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import type { BrowserContextOptions } from 'playwright-core';
 import { BrowserError } from './errors.js';
-import { parseCommand } from './commands.js';
+import { commandSchemas, parseCommand, type CommandName } from './commands.js';
 import type { BrowserLaunchOptions } from './types.js';
 import { parseCapabilities } from './capabilities.js';
 const definitions = {
@@ -12,7 +12,7 @@ const definitions = {
   url: { type: 'string' }, scope: { type: 'string' }, frame: { type: 'string' }, args: { type: 'string' },
   values: { type: 'string' }, fields: { type: 'string' }, schema: { type: 'string' }, 'records-scope': { type: 'string' },
   'plan-id': { type: 'string' }, 'max-steps': { type: 'string' }, 'timeout-ms': { type: 'string' }, model: { type: 'string' },
-  'max-elements': { type: 'string' }, 'max-texts': { type: 'string' }, 'max-candidates': { type: 'string' },
+  'max-elements': { type: 'string' }, 'max-texts': { type: 'string' }, 'max-candidates': { type: 'string' }, exclude: { type: 'string', multiple: true },
   browser: { type: 'string' }, 'cdp-endpoint': { type: 'string' }, 'ws-endpoint': { type: 'string' },
   'user-data-dir': { type: 'string' }, 'storage-state': { type: 'string' }, 'output-dir': { type: 'string' },
   'file-root': { type: 'string', multiple: true }, 'idle-timeout-ms': { type: 'string' },
@@ -118,5 +118,13 @@ export function commandFromCLI(name: string, words: string[], values: ReturnType
   if (values['records-scope']) args.recordsScope = values['records-scope'];
   if (values['plan-id']) args.planId = values['plan-id'];
   if (values['max-steps']) args.maxSteps = positive(values['max-steps'], '--max-steps');
+  // --max-* also set session defaults at launch; commands that observe take them as per-call limits too.
+  const schema = Object.hasOwn(commandSchemas, name) ? commandSchemas[name as CommandName] : undefined;
+  if (schema && 'shape' in schema && 'maxElements' in schema.shape) {
+    if (values['max-elements'] !== undefined) args.maxElements = positive(values['max-elements'], '--max-elements');
+    if (values['max-texts'] !== undefined) args.maxTexts = positive(values['max-texts'], '--max-texts');
+    if (values['max-candidates'] !== undefined) args.maxCandidates = positive(values['max-candidates'], '--max-candidates');
+  }
+  if (values.exclude !== undefined) args.exclude = values.exclude;
   return parseCommand({ command: name, ...args });
 }

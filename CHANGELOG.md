@@ -18,6 +18,8 @@
 - A core attached to a borrowed Page without `captureDialogs` no longer intercepts file choosers between its operations, so the caller's own chooser handling and a headed browser's native picker work as usual; choosers opened during a Jev operation are still held for `file_upload`.
 - A screenOnly session now recovers from a native dialog: it is reported once with `SCREEN_DIALOG_UNSUPPORTED` and dismissed, instead of failing every later screen call with `DIALOG_PENDING` until a restart.
 - A screenOnly session now recovers from a new tab opened by the page, such as a `target="_blank"` link: it is reported once with `SCREEN_POPUP_UNSUPPORTED` and closed, instead of failing every later screen call while the tab stays open.
+- `snapshot`, `observe`, `act`, `extract`, the semantic tools and `run` accept per-call `maxElements`, `maxTexts` and `maxCandidates` (clamped to 1000 / 2000 / 2000) and `exclude` CSS selectors, in the SDK, MCP and CLI (`--exclude`), so one large page no longer needs a new session with higher limits.
+- `scope` also accepts a current snapshot or `semantic_locate` ref, limiting observation to that element in its own frame; an expired ref fails with `STALE_TARGET`.
 
 ## 0.12.2
 

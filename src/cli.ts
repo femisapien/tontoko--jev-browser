@@ -41,6 +41,8 @@ Options:
   --scope CSS  --frame N     Bound observation or select a native frame
   --plan-id ID  --max-steps N  --timeout-ms N
   --max-elements N  --max-texts N  --max-candidates N
+                             Session defaults at open; per-call limits on observing commands
+  --exclude CSS (repeatable)  Leave matching subtrees out of this command's observation
   --browser chromium|firefox|webkit  --headed
   --cdp-endpoint URL  --ws-endpoint URL  --user-data-dir DIR
   --storage-state FILE  --output-dir DIR

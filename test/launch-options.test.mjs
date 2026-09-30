@@ -113,6 +113,19 @@ test('reopening a named CLI session with different launch options is a mode mism
   assert.match(reported(JSON.parse(snapshot.stdout).result), /^640x480 /);
 });
 
+test('per-call observation flags on session commands do not change the session launch options', async t => {
+  const session = 'percall-' + randomUUID().slice(0, 8);
+  t.after(() => cli(['close', '--session', session]));
+  assert.equal((await cli(['open', site.url, '--session', session])).code, 0);
+  const snapshot = await cli(['snapshot', '--session', session, '--max-elements', '300', '--max-texts', '400', '--max-candidates', '500', '--exclude', 'nav']);
+  assert.equal(snapshot.code, 0, snapshot.stdout + snapshot.stderr);
+  const reopened = await cli(['open', '--session', session]);
+  assert.equal(reopened.code, 0, reopened.stdout); assert.equal(JSON.parse(reopened.stdout).result.reused, true);
+  // At open the same flags are session defaults, so they are launch options.
+  const changed = await cli(['open', '--session', session, '--max-elements', '300']);
+  assert.equal(JSON.parse(changed.stdout).error.code, 'SESSION_MODE_MISMATCH', changed.stdout);
+});
+
 async function freePort() {
   const server = createServer(); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address(); await new Promise(resolve => server.close(resolve)); return port;
