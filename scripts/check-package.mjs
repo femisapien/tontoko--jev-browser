@@ -26,7 +26,7 @@ async function run(args, options = {}) {
     const child = spawn(process.execPath, args, { cwd: root, env: process.env, stdio: ['pipe', 'pipe', 'pipe'], ...options });
     let stdout = '', stderr = '';
     child.stdout.on('data', c => stdout += c); child.stderr.on('data', c => stderr += c);
-    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('Package verification process timed out')); }, 120000);
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`Package verification process timed out: ${args.slice(1).join(' ').slice(0, 200)}\n${stdout.slice(-4000)}\n${stderr.slice(-4000)}`)); }, 120000);
     child.once('error', error => { clearTimeout(timer); reject(error); });
     child.once('close', code => { clearTimeout(timer); if (code !== 0) reject(new Error(`Process failed (${code})\n${stdout}\n${stderr}`)); else resolve({ stdout, stderr }); });
     child.stdin.end();

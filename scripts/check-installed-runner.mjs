@@ -12,7 +12,7 @@ const minimum=async()=>/^>=(\d+\.\d+\.\d+) /.exec(JSON.parse(await readFile(new 
 function runner(directory,baseEnv){return args=>new Promise((resolve,reject)=>{
   const child=spawn(process.execPath,args,{cwd:directory,env:baseEnv,stdio:['ignore','pipe','pipe']});
   let stdout='',stderr='';child.stdout.on('data',data=>stdout+=data);child.stderr.on('data',data=>stderr+=data);
-  const timer=setTimeout(()=>{child.kill('SIGKILL');reject(new Error('Caller runner process timed out'));},120000);
+  const timer=setTimeout(()=>{child.kill('SIGKILL');reject(new Error(`Caller runner process timed out: ${args.slice(1).join(' ')}\n${stdout.slice(-4000)}\n${stderr.slice(-4000)}`));},120000);
   child.once('error',error=>{clearTimeout(timer);reject(error);});
   child.once('close',code=>{clearTimeout(timer);if(code!==0)reject(new Error(`Caller runner process failed (${code})\n${stdout}\n${stderr}`));else resolve(stdout);});
 });}

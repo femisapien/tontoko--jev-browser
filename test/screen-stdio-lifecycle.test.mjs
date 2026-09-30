@@ -18,20 +18,28 @@ async function connect(t,site,{screenOnly=true,timeoutMs=2500}={}) {
 }
 const look=client=>client.callTool({name:'browser_screen',arguments:{action:'look'}});
 
-test('MCP stdin shutdown cancels a held trusted startup navigation promptly',async t=>{
+// The held navigation would only end by timing out after NAVIGATION_TIMEOUT_MS. EOF cancels it at once, but
+// the process then waits for Chromium's own graceful exit (Browser.close until the process is gone), which
+// took up to 5.7 s on Windows CI runners (and 1.4-2.2 s on a loaded Linux host) while the cancellation itself
+// took under 10 ms. EXIT_BUDGET_MS absorbs that platform shutdown time and stays far below the timeout, so
+// an exit inside it still proves EOF cancelled the navigation instead of waiting for it.
+const NAVIGATION_TIMEOUT_MS=60_000, EXIT_BUDGET_MS=20_000;
+test('MCP stdin shutdown cancels a held trusted startup navigation promptly',{timeout:NAVIGATION_TIMEOUT_MS},async t=>{
   let requested;
   const navigationRequested=new Promise(resolve=>{requested=resolve;});
   const site=await httpServer(()=>{requested();});
-  const {client,transport}=await connect(t,site);
+  const {client,transport}=await connect(t,site,{timeoutMs:NAVIGATION_TIMEOUT_MS});
   const pending=look(client).catch(error=>error);
   await navigationRequested;
   // End only stdin, without the client's later forced process termination masking a leaked browser.
   const child=transport._process;
   const exited=new Promise(resolve=>child.once('exit',(code,signal)=>resolve({code,signal})));
   child.stdin.end();
-  const result=await Promise.race([exited,delay(1200).then(()=>null)]);
+  const result=await Promise.race([exited,delay(EXIT_BUDGET_MS).then(()=>null)]);
   assert.deepEqual(result,{code:0,signal:null},'EOF must close the owned browser while initial navigation is pending');
-  await pending;
+  // The server may exit before its reply is flushed; a delivered reply must report the cancellation, not a timeout.
+  const reply=await pending, text=reply?.content?.find(item=>item.type==='text')?.text;
+  if(text)assert.match(JSON.parse(text).error.code,/^(CANCELLED|CLOSED)$/);
 });
 
 for(const screenOnly of [true,false]) {
