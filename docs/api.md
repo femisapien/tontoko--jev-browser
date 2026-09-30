@@ -124,6 +124,8 @@ A dialog result must be handled with `handle_dialog` before other operations. `c
 
 Messages for mapped Playwright failures add the first line of the underlying error, capped at 200 characters, with URL credentials, query and fragment removed. Messages thrown by page code during evaluation are withheld. Other stable codes distinguish configuration, unsupported schemas, missing candidates/evidence, stale refs/plans, failed assertions, denied capabilities, and session failures.
 
+Some errors add sanitized machine-readable `details`, which CLI/MCP errors include. Screen validation errors list the failing `issues`, and screen capture failures state a `reason`. See [screen review](screen-review.md#freshness-and-failures).
+
 A native/AI command returning `executed` means the operation ran, not that the business workflow succeeded. Goal execution can also establish UI readback by comparing a fresh result record with actual supplied values. Inspect the verification source and unobserved fields; this does not prove database durability. Never treat confidence or the absence of an exception as a passed E2E assertion.
 
 Downloads are reported after the browser emits a download event. A click returning does not imply a download has started. In SDK workflows, register `page.waitForEvent('download')` before clicking; native clients can inspect the current download list in a later command. Whether a resource is rendered or downloaded depends on browser behavior and the response MIME/Content-Disposition headers.

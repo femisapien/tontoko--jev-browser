@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {JevBrowser} from '../dist/index.js';
-test('a native file chooser is reported as a tool limitation without revealing its element metadata',async t=>{
+test('a native file chooser is reported once as a tool limitation without revealing its element metadata',async t=>{
  const core=await JevBrowser.launch();t.after(()=>core.close());
  await core.page.setContent('<input type="file" hidden aria-label="PRIVATE_FILE_FIELD"><button style="position:absolute;left:20px;top:20px;width:140px;height:50px" onclick="document.querySelector(\'input\').click()">Choose a file</button>');
  const seen=await core.screen({action:'look'});
@@ -9,4 +9,6 @@ test('a native file chooser is reported as a tool limitation without revealing i
   assert.equal(error.code,'SCREEN_FILE_CHOOSER_UNSUPPORTED');assert.equal(error.message.includes('PRIVATE_'),false);return true;
  });
  assert.equal(await core.page.locator('input').evaluate(input=>input.files.length),0);
+ // The intercepted chooser leaves the page usable, so it is reported once rather than blocking later observations.
+ const next=await core.screen({action:'look'});assert.equal(next.action.outcome,'observed');
 });

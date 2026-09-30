@@ -39,6 +39,7 @@ export async function sendSession(name: string, command: Command | { command: 'h
     const error=new BrowserError(envelope.error?.code ?? 'SESSION_ERROR', envelope.error?.message ?? 'The session command failed.', { retryable: envelope.error?.retryable === true });
     if(envelope.error?.partial)error.partial=envelope.error.partial;
     if(envelope.error?.semantic)error.semantic=envelope.error.semantic;
+    if(envelope.error?.details)error.details=envelope.error.details;
     throw error;
   }
   return envelope.result ?? {};

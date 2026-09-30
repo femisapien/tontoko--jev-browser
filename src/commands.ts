@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { JevBrowser } from './browser.js';
 import { BrowserError } from './errors.js';
 import { nativeSchemas, nativeReadOnly, type NativeCommand, type NativeName } from './native-schemas.js';
-import { screenSchema } from './screen.js';
+import { invalidScreenRequest, screenSchema } from './screen.js';
 
 const scope = z.string().min(1).optional();
 const instruction = z.string().trim().min(1);
@@ -38,7 +38,7 @@ export const commandSchemas = {
 export type CommandName = keyof typeof commandSchemas;
 export type Command = { [K in CommandName]: { command: K } & z.output<(typeof commandSchemas)[K]> }[CommandName];
 const descriptions: Partial<Record<CommandName, string>> = {
-  screen: 'Observe viewport pixels or use coordinates, focused typing, editing keys and scroll. Inputs require the latest observationId. Returns fresh images and real timestamps, never DOM, selectors, labels or URL metadata.',
+  screen: 'Observe viewport pixels or send one physical input. Start with action look. click, move, drag, scroll, type, press, back, forward and reload require the latest observationId; field descriptions state each action\'s arguments. Rejected requests keep that observationId usable; after failed captures, back, forward or reload can recover without one. Returns fresh images, real timestamps and whether the main frame navigated, never DOM, selectors, labels or URL metadata.',
   goto: 'Navigate to an HTTP(S) URL. Alias for navigate.',
   navigate: 'Navigate the selected tab to an HTTP(S) URL.',
   snapshot: 'Read accessible controls and source text, with short-lived element references. No model call.',
@@ -81,7 +81,7 @@ export function parseCommand(input: unknown): Command {
   const { command, ...args } = input;
   const name = command as CommandName;
   const parsed = commandSchemas[name].safeParse(args);
-  if (!parsed.success) throw new BrowserError('INVALID_ARGUMENT', `Invalid arguments for ${name}. See --help or the tool input schema.`);
+  if (!parsed.success) throw name === 'screen' ? invalidScreenRequest(args, parsed.error.issues) : new BrowserError('INVALID_ARGUMENT', `Invalid arguments for ${name}. See --help or the tool input schema.`);
   return { command: name, ...parsed.data } as Command;
 }
 export async function executeCommand(browser: JevBrowser, request: Command, signal?: AbortSignal): Promise<object> {

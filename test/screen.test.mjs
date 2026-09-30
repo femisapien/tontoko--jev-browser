@@ -1,5 +1,6 @@
 import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {mkdtemp,readFile,readdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -57,13 +58,114 @@ test('screen checks the existing command policy and rechecks freshness after aut
  const denied=await fixture(t,{allowCommand:command=>command.command!=='screen'});
  await assert.rejects(denied.core.screen({action:'look'}),{code:'ACTION_DENIED'});
 });
-test('navigation inside an observed iframe invalidates the whole viewport observation',async t=>{
+test('only a main-frame navigation invalidates the viewport observation',async t=>{
  const {core,page}=await fixture(t);
- await page.setContent('<iframe src="'+server.url+'"></iframe><button style="position:absolute;left:20px;top:20px;width:100px;height:40px" onclick="this.textContent=\'Unexpected\'">Unchanged</button>');
- const seen=await core.screen({action:'look'});
+ await page.setContent('<iframe src="'+server.url+'"></iframe><button style="position:absolute;left:20px;top:20px;width:100px;height:40px" onclick="this.textContent=\'Clicked\'">Unchanged</button>');
+ let seen=await core.screen({action:'look'});
+ // Subframe content changes like other page content; it does not replace the observed document.
  await page.frames().find(frame=>frame!==page.mainFrame()).goto(server.url+'/changed');
- await assert.rejects(core.screen({action:'click',x:50,y:35,observationId:seen.observationId}),{code:'STALE_SCREEN'});
- assert.equal(await page.locator('button').textContent(),'Unchanged');
+ seen=await core.screen({action:'click',x:50,y:35,observationId:seen.observationId});
+ assert.equal(await page.locator('button').textContent(),'Clicked');assert.equal(seen.navigated,false);
+ await page.evaluate(()=>{location.hash='same-document';});
+ await assert.rejects(core.screen({action:'move',x:5,y:5,observationId:seen.observationId}),{code:'STALE_SCREEN'});
+});
+async function site(t,handler){const s=await httpServer(handler);t.after(()=>s.close());return s;}
+const button=label=>'<button style="position:absolute;left:20px;top:20px;width:150px;height:40px" onclick="this.textContent=\'Clicked\'">'+label+'</button>';
+test('a navigation started by an input settles into a fresh image instead of a stale capture',async t=>{
+ const {core,page}=await fixture(t);
+ const s=await site(t,(req,res)=>{res.setHeader('content-type','text/html');
+  if(req.url==='/next'){setTimeout(()=>res.end(button('Next page')),50);return;}
+  res.end('<a href="/next" style="position:absolute;left:20px;top:20px;width:150px;height:40px;display:block">Go next</a>');});
+ await page.goto(s.url);
+ let seen=await core.screen({action:'look'});
+ seen=await core.screen({action:'click',x:60,y:40,observationId:seen.observationId});
+ assert.equal(seen.navigated,true);assert.equal(seen.action.outcome,'executed');assert.equal(new URL(page.url()).pathname,'/next');
+ await core.screen({action:'click',x:60,y:40,observationId:seen.observationId});
+ assert.equal(await page.locator('button').textContent(),'Clicked');
+});
+test('a navigation body reported before its commit still settles into the new document',async t=>{
+ const {core,page}=await fixture(t);
+ const s=await site(t,(req,res)=>{res.setHeader('content-type','text/html');
+  if(req.url==='/next'){setTimeout(()=>res.end(button('Next page')),50);return;}
+  res.end('<a href="/next" style="position:absolute;left:20px;top:20px;width:150px;height:40px;display:block">Go next</a>');});
+ // Firefox can report requestfinished before the main-frame commit; delaying framenavigated reproduces that order on every engine.
+ const on=page.on.bind(page);page.on=(event,listener)=>on(event,event==='framenavigated'?frame=>setTimeout(()=>listener(frame),150):listener);
+ await page.goto(s.url);
+ let seen=await core.screen({action:'look'});
+ seen=await core.screen({action:'click',x:60,y:40,observationId:seen.observationId});
+ assert.equal(seen.navigated,true);assert.equal(new URL(page.url()).pathname,'/next');
+ await core.screen({action:'click',x:60,y:40,observationId:seen.observationId});
+ assert.equal(await page.locator('button').textContent(),'Clicked');
+});
+test('look waits for a pending main-frame navigation and observes the new document',async t=>{
+ const {core,page}=await fixture(t);let requested,respond;const navigation=new Promise(resolve=>{requested=resolve;});
+ const s=await site(t,(req,res)=>{res.setHeader('content-type','text/html');
+  if(req.url==='/next'){respond=()=>res.end(button('Next page'));requested();return;}
+  res.end('<p>Start</p>');});
+ await page.goto(s.url);await core.screen({action:'look'});
+ await page.evaluate(()=>{location.href='/next';});await navigation;
+ const pending=core.screen({action:'look'});respond();
+ const seen=await pending;assert.equal(seen.navigated,true);
+ await core.screen({action:'click',x:60,y:40,observationId:seen.observationId});
+ assert.equal(await page.locator('button').textContent(),'Clicked');
+});
+test('navigations that keep interrupting the retake return STALE_SCREEN, not a capture failure',async t=>{
+ const {core,page}=await fixture(t);let interrupts=0;const screenshot=page.screenshot.bind(page);
+ // Each hooked screenshot starts after a real main-frame same-document navigation; engines throttle unbounded History API streams.
+ page.screenshot=async(...args)=>{if(interrupts>0){interrupts--;await Promise.all([page.waitForEvent('framenavigated'),page.evaluate(()=>{location.hash='n'+Math.random();})]);}return screenshot(...args);};
+ await page.setContent(button('Start'));
+ let seen=await core.screen({action:'look'});interrupts=2;
+ await assert.rejects(core.screen({action:'click',x:60,y:40,observationId:seen.observationId}),error=>{assert.equal(error.code,'STALE_SCREEN');return true;});
+ assert.equal(await page.locator('button').textContent(),'Clicked');assert.equal(interrupts,0);
+ interrupts=2;await assert.rejects(core.screen({action:'look'}),error=>{assert.equal(error.code,'STALE_SCREEN');return true;});
+ seen=await core.screen({action:'look'});assert.equal(seen.navigated,false);assert.equal(seen.frames.length,1);
+});
+test('an input navigation that ends without a document does not hold the capture',async t=>{
+ const {core,page}=await fixture(t);
+ const s=await site(t,(req,res)=>{if(req.url==='/empty'){setTimeout(()=>{res.statusCode=204;res.end();},100);return;}
+  res.setHeader('content-type','text/html');res.end('<a href="/empty" style="position:absolute;left:20px;top:20px;width:150px;height:40px;display:block">Nothing</a>');});
+ await page.goto(s.url);
+ const seen=await core.screen({action:'look'}),started=performance.now();
+ const r=await core.screen({action:'click',x:60,y:40,observationId:seen.observationId});
+ assert.equal(r.navigated,false);assert.equal(new URL(page.url()).pathname,'/');assert.ok(performance.now()-started<3000,'a 204 navigation must not wait for the settle budget');
+});
+test('failed captures report a reason, and history actions recover without an observationId only then',async t=>{
+ const {core,page}=await fixture(t);let fontRequested;const font=new Promise(resolve=>{fontRequested=resolve;});
+ const s=await site(t,(req,res)=>{if(req.url==='/held.woff2'){fontRequested();return;}res.setHeader('content-type','text/html');res.end(button('Ready'));});
+ await page.goto(s.url);
+ let seen=await core.screen({action:'look'});
+ await assert.rejects(core.screen({action:'reload'}),error=>error.code==='INVALID_ARGUMENT'&&error.details.issues[0].path==='observationId'&&error.details.observationId===seen.observationId);
+ // Playwright screenshots wait for fonts, so a held font makes the capture fail for a known reason.
+ await page.evaluate(url=>{const face=new FontFace('held',`url("${url}/held.woff2")`);document.fonts.add(face);document.body.style.fontFamily='held';void face.load().catch(()=>{});},s.url);
+ await font;
+ await assert.rejects(core.screen({action:'look'},{timeoutMs:1000}),error=>{
+  assert.equal(error.code,'SCREEN_FAILED');assert.deepEqual(error.details,{reason:'timeout'});assert.match(error.message,/timeout/);return true;
+ });
+ await assert.rejects(core.screen({action:'reload',observationId:seen.observationId}),error=>error.code==='STALE_SCREEN'&&/omit observationId/.test(error.message));
+ seen=await core.screen({action:'reload'});
+ assert.equal(seen.action.outcome,'executed');assert.equal(seen.navigated,true);
+ await core.screen({action:'click',x:60,y:40,observationId:seen.observationId});
+ assert.equal(await page.locator('button').textContent(),'Clicked');
+ await page.close();
+ await assert.rejects(core.screen({action:'look'}),error=>error.code==='SCREEN_FAILED'&&error.details.reason==='page-closed');
+});
+test('a crashed page is reported as the capture failure reason without suggesting history recovery',{skip:(process.env.JEV_BROWSER??'chromium')!=='chromium'},async t=>{
+ const {core,page}=await fixture(t);await core.screen({action:'look'});
+ const crashed=page.waitForEvent('crash');const cdp=await page.context().newCDPSession(page);cdp.send('Page.crash').catch(()=>{});await crashed;
+ await assert.rejects(core.screen({action:'look'}),error=>{
+  assert.equal(error.code,'SCREEN_FAILED');assert.deepEqual(error.details,{reason:'page-crashed'});assert.equal(/reload/.test(error.message),false);return true;
+ });
+});
+test('a native dialog that interrupts a capture is reported as its reason',async t=>{
+ const {core,page}=await fixture(t);let fontRequested;const font=new Promise(resolve=>{fontRequested=resolve;});
+ const s=await site(t,(req,res)=>{if(req.url==='/held.woff2'){fontRequested();return;}res.setHeader('content-type','text/html');res.end('<p>Visible</p>');});
+ await page.goto(s.url);
+ await page.evaluate(url=>{const face=new FontFace('held',`url("${url}/held.woff2")`);document.fonts.add(face);document.body.style.fontFamily='held';void face.load().catch(()=>{});},s.url);
+ await font;
+ const pending=core.screen({action:'look'},{timeoutMs:1000}).catch(error=>error);
+ await page.evaluate(()=>{setTimeout(()=>alert('PRIVATE_DIALOG'));});
+ const error=await pending;
+ assert.equal(error.code,'SCREEN_FAILED');assert.deepEqual(error.details,{reason:'dialog'});assert.equal(error.message.includes('PRIVATE_'),false);
 });
 test('screen mode rejects ordinary dispatcher commands and does not change normal mode',async t=>{
  const {core}=await fixture(t,{screenOnly:true});
@@ -112,6 +214,38 @@ test('invalid screen commands cannot inject selectors or privileged keyboard cho
  await assert.rejects(core.screen({action:'click',x:421,y:20,observationId:seen.observationId}),{code:'SCREEN_COORDINATES'});
  assert.equal(await page.locator('input').inputValue(),'');
 });
+test('rejected screen requests send nothing and keep the latest observation usable',async t=>{
+ const {core,page}=await fixture(t,{screenOnly:true,allowCommand:command=>!(command.command==='screen'&&command.request.action==='press')});
+ const seen=await core.screen({action:'look'});
+ for(const [request,code] of [
+  [{action:'click',x:60,y:40},'INVALID_ARGUMENT'],
+  [{action:'scroll',deltaX:0,deltaY:40,x:5,observationId:seen.observationId},'INVALID_ARGUMENT'],
+  [{action:'click',x:421,y:20,observationId:seen.observationId},'SCREEN_COORDINATES'],
+  [{action:'press',key:'Tab',observationId:seen.observationId},'ACTION_DENIED'],
+  [{action:'click',x:60,y:40,observationId:'an-older-observation'},'STALE_SCREEN'],
+ ])await assert.rejects(core.screen(request),{code});
+ await assert.rejects(executeCommand(core,parseCommand({command:'snapshot'})),{code:'SCREEN_ONLY'});
+ assert.equal(await page.evaluate(()=>document.activeElement===document.body),true);
+ const next=await core.screen({action:'click',x:60,y:40,observationId:seen.observationId});
+ assert.equal(next.action.outcome,'executed');assert.equal(await page.evaluate(()=>document.activeElement?.tagName),'INPUT');
+});
+test('screen validation names the action and field and returns the current observationId',async t=>{
+ const {core}=await fixture(t);
+ let seen=await core.screen({action:'look'});
+ await assert.rejects(core.screen({action:'click',x:60,y:40}),error=>{
+  assert.equal(error.code,'INVALID_ARGUMENT');assert.match(error.message,/click/);assert.match(error.message,/observationId/);
+  assert.deepEqual(error.details,{action:'click',issues:[{path:'observationId',message:error.details.issues[0].message}],observationId:seen.observationId});
+  return true;
+ });
+ await assert.rejects(core.screen({action:'capture',capture:{frames:2,intervalMs:20}}),error=>{
+  assert.match(error.message,/action: Expected one of look, click/);assert.equal(error.details.action,undefined);return true;
+ });
+ await assert.rejects(core.screen({action:'scroll',observationId:seen.observationId}),error=>error.details.issues[0].path==='deltaY');
+ // An omitted wheel delta is 0. wait sends no input, so it observes without an observationId.
+ seen=await core.screen({action:'scroll',deltaY:40,observationId:seen.observationId});assert.equal(seen.action.outcome,'executed');
+ seen=await core.screen({action:'wait',milliseconds:0});assert.equal(seen.action.outcome,'observed');
+ await assert.rejects(core.screen({action:'wait'}),error=>error.details.issues[0].path==='milliseconds'&&error.details.observationId===seen.observationId);
+});
 test('screen emits timestamped transient frames and writes evidence without duplicating typed text',async t=>{
  const outputDir=await mkdtemp(join(root,'evidence-'));const {core,page}=await fixture(t,{outputDir});assert.equal(typeof core.screen,'function');
  let r=await core.screen({action:'look'});r=await core.screen({action:'click',x:50,y:35,observationId:r.observationId});
@@ -125,4 +259,33 @@ test('screen emits timestamped transient frames and writes evidence without dupl
  const text=await readFile(join(outputDir,logs[0]),'utf8');assert.equal(text.includes('PRIVATE_TYPED_VALUE'),false);assert.equal(text.includes('HIDDEN_'),false);
  const rows=text.trim().split('\n').map(JSON.parse);assert.ok(rows.some(row=>row.action.kind==='type'&&row.input.textLength===19));
  assert.ok(rows.some(row=>row.action.outcome==='denied'));
+});
+test('the screen journal records its environment and verifiable frame digests',async t=>{
+ const outputDir=await mkdtemp(join(root,'journal-'));const {core}=await fixture(t,{outputDir});
+ const r=await core.screen({action:'look',capture:{frames:2,intervalMs:20}});
+ const [log,...others]=(await readdir(outputDir)).filter(n=>n.endsWith('.jsonl'));assert.equal(others.length,0);
+ const [header,row]=(await readFile(join(outputDir,log),'utf8')).trim().split('\n').map(JSON.parse);
+ const pkg=JSON.parse(await readFile(new URL('../package.json',import.meta.url),'utf8'));
+ assert.equal(header.action.kind,'header');assert.deepEqual(header.frames,[]);
+ assert.equal(header.header.jevBrowser,pkg.version);assert.match(header.header.playwright,/^\d+\.\d+\.\d+/);
+ assert.equal(header.header.browser.name,process.env.JEV_BROWSER??'chromium');assert.ok(header.header.browser.version);
+ assert.deepEqual(header.header.viewport,{width:420,height:320});assert.equal(header.header.launch,undefined);
+ assert.equal(row.frames.length,2);
+ for(const [i,frame] of row.frames.entries()){
+  const png=await readFile(frame.path);assert.ok(png.equals(Buffer.from(r.frames[i].data,'base64')));
+  assert.equal(frame.sha256,createHash('sha256').update(png).digest('hex'));assert.deepEqual([frame.width,frame.height],[420,320]);
+ }
+ assert.equal('sha256' in r.frames[0],false);
+});
+test('journal launch evidence keeps display settings and redacts credentials, headers and paths',async t=>{
+ const outputDir=await mkdtemp(join(root,'launch-'));
+ const core=await JevBrowser.launch({outputDir,launchOptions:{env:{...process.env,PRIVATE_ENV:'PRIVATE_ENV_VALUE'}},storageState:{cookies:[],origins:[]},
+  contextOptions:{viewport:{width:360,height:240},locale:'en-US',httpCredentials:{username:'user',password:'PRIVATE_PASSWORD'},extraHTTPHeaders:{authorization:'PRIVATE_TOKEN'}}});
+ t.after(()=>core.close());
+ await core.screen({action:'look'});
+ const log=(await readdir(outputDir)).find(n=>n.endsWith('.jsonl'));const text=await readFile(join(outputDir,log),'utf8');
+ assert.equal(text.includes('PRIVATE_'),false);
+ const {launch}=JSON.parse(text.split('\n')[0]).header;
+ assert.deepEqual(launch.contextOptions,{viewport:{width:360,height:240},locale:'en-US',httpCredentials:'[redacted]',extraHTTPHeaders:'[redacted]'});
+ assert.deepEqual(launch.launchOptions,{env:'[redacted]'});assert.equal(launch.storageState,'[redacted]');
 });

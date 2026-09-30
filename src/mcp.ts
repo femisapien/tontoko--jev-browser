@@ -2,7 +2,7 @@ import { version } from './version.js';
 import { McpServer } from '@modelcontextprotocol/server';
 import type { z } from 'zod';
 import type { JevBrowser } from './browser.js';
-import { commandSchemas, commandDescriptions, commandReadOnly, executeCommand, parseCommand, type CommandName } from './commands.js';
+import { commandSchemas, commandDescriptions, commandReadOnly, executeCommand, parseCommand, type Command, type CommandName } from './commands.js';
 import { publicError } from './errors.js';
 import type { ScreenResult } from './screen.js';
 import { screenToolSchema } from './screen-tool.js';
@@ -11,6 +11,7 @@ import { screenToolSchema } from './screen-tool.js';
 export function createMcpServer(browser: JevBrowser | (() => Promise<JevBrowser>), options: { screenOnly?: boolean } = {}): McpServer {
   const server = new McpServer({ name: 'jev-browser', version });
   const screenOnly = typeof browser === 'function' ? options.screenOnly === true : browser.screenOnly;
+  let started = typeof browser !== 'function';
   const names: CommandName[] = screenOnly ? ['screen', 'close'] : Object.keys(commandSchemas) as CommandName[];
   for (const name of names) {
     const inputSchema: z.ZodType = name === 'screen' ? screenToolSchema : commandSchemas[name];
@@ -21,8 +22,9 @@ export function createMcpServer(browser: JevBrowser | (() => Promise<JevBrowser>
     }, async (args, context) => {
       try {
         context.mcpReq.signal.throwIfAborted();
-        const command = parseCommand({ ...(args as object), command: name });
-        const core = typeof browser === 'function' ? await browser() : browser;
+        // A started core validates screen requests with the same schema and can report its current observationId.
+        const command = name === 'screen' && started ? { ...(args as object), command: name } as Command : parseCommand({ ...(args as object), command: name });
+        const core = typeof browser === 'function' ? await browser() : browser; started = true;
         const result = await executeCommand(core, command, context.mcpReq.signal);
         if (name === 'screen') {
           const screen = result as ScreenResult;

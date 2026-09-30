@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
+import { JevBrowser } from '../dist/index.js';
 import { createMcpServer } from '../dist/mcp.js';
 
 test('MCP advertises flat screen arguments and rejects incomplete actions before browser startup', async t => {
@@ -43,4 +44,42 @@ test('MCP advertises flat screen arguments and rejects incomplete actions before
     assert.match(result.content.find(item => item.type === 'text').text, /INVALID_ARGUMENT/);
   }
   assert.equal(starts, 0);
+});
+
+test('MCP screen discovery states per-action arguments and validation names the failing field', async t => {
+  const server = createMcpServer(async () => { throw new Error('Unexpected browser startup'); }, { screenOnly: true });
+  const client = new Client({ name: 'screen-tool-fields', version: '1' });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  t.after(async () => { await client.close(); await server.close(); });
+  await server.connect(st);
+  await client.connect(ct);
+  const schema = (await client.listTools()).tools.find(tool => tool.name === 'browser_screen').inputSchema;
+  for (const [name, property] of Object.entries(schema.properties)) assert.ok(property.description?.length > 20, `${name} needs a description`);
+  assert.match(schema.properties.observationId.description, /Required for click.*Optional for wait/);
+  assert.match(schema.properties.action.description, /capture/);
+  assert.match(schema.properties.deltaX.description, /omitted delta is 0/);
+  const error = async args => JSON.parse((await client.callTool({ name: 'browser_screen', arguments: args })).content.find(item => item.type === 'text').text).error;
+  const missing = await error({ action: 'click', x: 20, y: 30 });
+  assert.equal(missing.code, 'INVALID_ARGUMENT');
+  assert.match(missing.message, /^Invalid screen click request: observationId: /);
+  assert.deepEqual(missing.details.issues.map(issue => issue.path), ['observationId']);
+  assert.deepEqual((await error({ action: 'scroll', deltaY: 10 })).details.issues.map(issue => issue.path), ['observationId']);
+  assert.deepEqual((await error({ action: 'wait' })).details.issues.map(issue => issue.path), ['milliseconds']);
+});
+
+test('after browser startup, MCP screen validation errors return the still-current observationId', async t => {
+  let core;
+  const server = createMcpServer(async () => core ??= await JevBrowser.launch({ screenOnly: true }), { screenOnly: true });
+  const client = new Client({ name: 'screen-tool-observation', version: '1' });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  t.after(async () => { await client.close(); await server.close(); await core?.close(); });
+  await server.connect(st);
+  await client.connect(ct);
+  const call = async args => { const result = await client.callTool({ name: 'browser_screen', arguments: args }); return JSON.parse(result.content.find(item => item.type === 'text').text); };
+  const seen = await call({ action: 'look' });
+  const { error } = await call({ action: 'click', x: 20, y: 30 });
+  assert.equal(error.code, 'INVALID_ARGUMENT');
+  assert.deepEqual(error.details.issues.map(issue => issue.path), ['observationId']);
+  assert.equal(error.details.observationId, seen.observationId);
+  assert.equal((await call({ action: 'click', x: 20, y: 30, observationId: seen.observationId })).action.outcome, 'executed');
 });
