@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {Client} from '@modelcontextprotocol/client';
 import {StdioClientTransport} from '@modelcontextprotocol/client/stdio';
-import {fixtureBrowser,httpServer,apiResult} from './helpers.mjs';
+import {fixtureBrowser,httpServer,apiResult,expandWire} from './helpers.mjs';
 import {goalFixture,formEngine} from './goal-fixture.mjs';
 let browser;before(async()=>{browser=await fixtureBrowser();});after(async()=>{await browser?.close();});
 const values={student:{name:'Adapter Student',email:'adapter@example.invalid'}};
@@ -13,7 +13,7 @@ async function setup(t,{fail=false}={}){
  const semantic=formEngine();let calls=0;
  const provider=await httpServer(async(req,res)=>{
   let raw='';for await(const chunk of req)raw+=chunk;
-  const request=JSON.parse(raw);calls++;
+  const request=expandWire(JSON.parse(raw));calls++;
   if(fail&&calls===2){res.statusCode=401;res.end('{"message":"test provider refusal"}');return;}
   const result=await semantic.decide(request);
   res.setHeader('Content-Type','application/json');res.end(JSON.stringify(apiResult(request,(_q,id)=>result.answers[id].choice)));

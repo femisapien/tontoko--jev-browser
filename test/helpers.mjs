@@ -40,3 +40,17 @@ export function semanticCandidates(question, request) {
   const sources=new Map((request.state?.page?.sources??[]).map(source=>[source.id,source]));
   return Object.entries(question.criteria).map(([id,candidate])=>[id,sources.get(candidate?.sourceId)??candidate]);
 }
+
+// Fixture providers stand in for the model, so they read the compact wire form back into the
+// shape the core built: contextId references resolve through state.contextTable.
+export function expandWire(request) {
+  const table = request?.state?.contextTable ?? {};
+  const expand = value => {
+    if (Array.isArray(value)) return value.map(expand);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => key === 'contextId' && typeof child === 'string' && Object.hasOwn(table, child) ? ['context', table[child]] : [key, expand(child)]));
+  };
+  const result = expand(request);
+  if (result?.state && typeof result.state === 'object' && request.state.contextTable && typeof request.state.contextTable === 'object') { delete result.state.contextTable; delete result.state.legend; }
+  return result;
+}

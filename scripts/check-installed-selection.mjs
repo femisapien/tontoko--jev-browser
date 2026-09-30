@@ -3,7 +3,7 @@ import {spawn} from 'node:child_process';
 import {join} from 'node:path';
 import {Client} from '@modelcontextprotocol/client';
 import {StdioClientTransport} from '@modelcontextprotocol/client/stdio';
-import {httpServer,fixtureBrowser,apiResult} from '../test/helpers.mjs';
+import {httpServer,fixtureBrowser,apiResult,expandWire} from '../test/helpers.mjs';
 import {selectionFixture} from '../test/selection-fixture.mjs';
 
 export async function checkInstalledSelection(pkg,directory,baseEnv){
@@ -12,7 +12,7 @@ export async function checkInstalledSelection(pkg,directory,baseEnv){
     const app=await selectionFixture({after(fn){cleanup.push(fn);}},browser);
     const endpoint=await httpServer(async(req,res)=>{
       let body='';for await(const chunk of req)body+=chunk;
-      const request=JSON.parse(body),decision=await app.decider.decide(request);
+      const request=expandWire(JSON.parse(body)),decision=await app.decider.decide(request);
       res.setHeader('Content-Type','application/json');res.end(JSON.stringify(apiResult(request,(_q,id)=>decision.answers[id].choice)));
     });
     cleanup.push(()=>endpoint.close());

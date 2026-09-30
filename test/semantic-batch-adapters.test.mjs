@@ -8,12 +8,12 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Client} from '@modelcontextprotocol/client';
 import {StdioClientTransport} from '@modelcontextprotocol/client/stdio';
-import {httpServer,apiResult} from './helpers.mjs';
+import {httpServer,apiResult,expandWire} from './helpers.mjs';
 import {parseCommand,commandReadOnly} from '../dist/commands.js';
 const requests=[{actual:{description:'Plan value'},expected:'Professional annual plan'},{actual:{description:'Payment value'},expected:'Payment complete'}];
 async function app(t,{fail=false}={}){
  const site=await httpServer((_q,r)=>{r.setHeader('content-type','text/html');r.end('<dl><dt>Plan</dt><dd>Pro annual</dd><dt>Payment</dt><dd>Settled</dd></dl>');});const calls=[];
- const provider=await httpServer(async(q,r)=>{let raw='';for await(const c of q)raw+=c;const request=JSON.parse(raw);calls.push(request);const result=apiResult(request,(question,id)=>{if(id.startsWith('source_'))return semanticCandidates(question,request).find(([,v])=>v?.text===(id==='source_0'?'Pro annual':'Settled'))?.[0]??'__none__';return fail&&id==='compare_1'?'different':'equivalent';});r.setHeader('content-type','application/json');r.end(JSON.stringify(result));});
+ const provider=await httpServer(async(q,r)=>{let raw='';for await(const c of q)raw+=c;const request=expandWire(JSON.parse(raw));calls.push(request);const result=apiResult(request,(question,id)=>{if(id.startsWith('source_'))return semanticCandidates(question,request).find(([,v])=>v?.text===(id==='source_0'?'Pro annual':'Settled'))?.[0]??'__none__';return fail&&id==='compare_1'?'different':'equivalent';});r.setHeader('content-type','application/json');r.end(JSON.stringify(result));});
  t.after(async()=>{await provider.close();await site.close();});return {url:site.url,calls,env:{...process.env,JEV_API_KEY:'fixture',JEV_BASE_URL:provider.url}};
 }
 function cli(env,args){return new Promise((resolve,reject)=>{const c=spawn(process.execPath,['dist/cli.js',...args],{cwd:fileURLToPath(new URL('..',import.meta.url)),env,stdio:['ignore','pipe','pipe']});let out='',err='';const timer=setTimeout(()=>{c.kill('SIGTERM');reject(new Error('batch CLI timeout'));},25000);c.stdout.on('data',x=>out+=x);c.stderr.on('data',x=>err+=x);c.once('error',e=>{clearTimeout(timer);reject(e);});c.once('close',code=>{clearTimeout(timer);resolve({code,out,err});});});}

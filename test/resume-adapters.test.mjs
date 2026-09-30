@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {Client,InMemoryTransport} from '@modelcontextprotocol/client';
 import {JevBrowser} from '../dist/index.js';
 import {createMcpServer} from '../dist/mcp.js';
-import {fixtureBrowser,httpServer,apiResult,engine} from './helpers.mjs';
+import {fixtureBrowser,httpServer,apiResult,engine,expandWire} from './helpers.mjs';
 
 let browser;
 before(async()=>{browser=await fixtureBrowser();});
@@ -47,7 +47,7 @@ async function setup(t){
   });
   const decider=decisionEngine();
   const provider=await httpServer(async(req,res)=>{
-    let raw='';for await(const chunk of req)raw+=chunk;const request=JSON.parse(raw),result=await decider.decide(request);
+    let raw='';for await(const chunk of req)raw+=chunk;const request=expandWire(JSON.parse(raw)),result=await decider.decide(request);
     res.setHeader('Content-Type','application/json');res.end(JSON.stringify(apiResult(request,(_q,id)=>result.answers[id].choice)));
   });
   t.after(async()=>{await site.close();await provider.close();});

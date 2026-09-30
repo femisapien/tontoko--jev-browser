@@ -4,7 +4,7 @@ import {spawn} from 'node:child_process';
 import {join} from 'node:path';
 import {Client} from '@modelcontextprotocol/client';
 import {StdioClientTransport} from '@modelcontextprotocol/client/stdio';
-import {httpServer,apiResult} from '../test/helpers.mjs';
+import {httpServer,apiResult,expandWire} from '../test/helpers.mjs';
 
 export async function checkInstalledSemantic(pkg,directory,baseEnv){
   const site=await httpServer((_req,res)=>{
@@ -14,7 +14,7 @@ export async function checkInstalledSemantic(pkg,directory,baseEnv){
   const provider=await httpServer(async(req,res)=>{
     try{
       let raw='';for await(const chunk of req)raw+=chunk;
-      const request=JSON.parse(raw);
+      const request=expandWire(JSON.parse(raw));
       const result=apiResult(request,(question,id)=>{
         if(id.startsWith('target'))return semanticCandidates(question,request).find(([,candidate])=>candidate?.name===(id==='target_1'?'Download invoice':'Manage plan'))?.[0]??'__none__';
         if(id.startsWith('source_'))return semanticCandidates(question,request).find(([,candidate])=>candidate?.text==='Pro annual')?.[0]??'__none__';

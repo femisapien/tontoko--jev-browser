@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {Client} from '@modelcontextprotocol/client';
 import {StdioClientTransport} from '@modelcontextprotocol/client/stdio';
-import {httpServer,apiResult} from './helpers.mjs';
+import {httpServer,apiResult,expandWire} from './helpers.mjs';
 import {parseCommand,commandReadOnly} from '../dist/commands.js';
 
 async function setup(t,{comparison='equivalent',confidence=0.95}={}){
@@ -15,7 +15,7 @@ async function setup(t,{comparison='equivalent',confidence=0.95}={}){
   });
   const provider=await httpServer(async(req,res)=>{
     let raw='';for await(const chunk of req)raw+=chunk;
-    const request=JSON.parse(raw);
+    const request=expandWire(JSON.parse(raw));
     const body=apiResult(request,(question,id)=>{
       if(id==='target')return semanticCandidates(question,request).find(([,candidate])=>candidate?.name==='Manage plan')?.[0]??'__none__';
       if(id.startsWith('source_'))return semanticCandidates(question,request).find(([,candidate])=>candidate?.text==='Pro annual')?.[0]??'__none__';

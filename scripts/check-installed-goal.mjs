@@ -4,7 +4,7 @@ import {spawn} from 'node:child_process';
 import {join} from 'node:path';
 import {Client} from '@modelcontextprotocol/client';
 import {StdioClientTransport} from '@modelcontextprotocol/client/stdio';
-import {fixtureBrowser,httpServer,apiResult} from '../test/helpers.mjs';
+import {fixtureBrowser,httpServer,apiResult,expandWire} from '../test/helpers.mjs';
 import {goalFixture,formEngine} from '../test/goal-fixture.mjs';
 
 export async function checkInstalledGoal(pkg,directory,baseEnv){
@@ -16,7 +16,7 @@ export async function checkInstalledGoal(pkg,directory,baseEnv){
     const provider=await httpServer(async(req,res)=>{
       try{
         let raw='';for await(const chunk of req)raw+=chunk;
-        const request=JSON.parse(raw),decision=await semantic.decide(request);
+        const request=expandWire(JSON.parse(raw)),decision=await semantic.decide(request);
         res.setHeader('Content-Type','application/json');
         res.end(JSON.stringify(apiResult(request,(_question,id)=>decision.answers[id].choice)));
       }catch{res.statusCode=500;res.end('{"error":"fixture provider error"}');}

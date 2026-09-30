@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {z} from 'zod';
 import {extractStructured} from '../dist/structured.js';
+import {compactDecisionRequest} from '../dist/decision.js';
 
 function rows(count,padding=''){
   const texts=[],records=[];
@@ -41,7 +42,8 @@ test('extraction frontier: chunk contexts stay below budget without dropping can
   const requests=[];const engine={async decide(request){requests.push(request);return decide(request);}};
   const result=await extractStructured(rows(70,'context '.repeat(80)),'Read all people',schema,()=>engine,new AbortController().signal,250);
   assert.equal(result.data.length,70);
-  assert.ok(requests.every(request=>Buffer.byteLength(JSON.stringify(request))<=128*1024));
+  // The budget applies to the compact form the engine actually sends.
+  assert.ok(requests.every(request=>Buffer.byteLength(JSON.stringify(compactDecisionRequest(request)))<=128*1024));
   assert.ok(requests.every(request=>Object.keys(request.questions).length<=64));
   for(let i=0;i<70;i++)assert.equal(result.evidence[`${i}.amount`].id,`a${i}`);
   assert.deepEqual(result.data,Array.from({length:70},(_,i)=>({name:`Person ${i}`,amount:i+10})));

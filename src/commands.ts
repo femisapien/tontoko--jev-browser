@@ -12,7 +12,7 @@ const cssScope = z.string().min(1).optional();
 // Per-call observation settings: optional plain properties, so tool schemas keep a single object shape.
 const observation = {
   maxElements: positiveInteger.optional().describe('Most controls observed in this call (default: session limit, 120). Values above 1000 are clamped.'),
-  maxTexts: positiveInteger.optional().describe('Most text sources observed in this call (default: session limit, 160). Values above 2000 are clamped.'),
+  maxTexts: positiveInteger.optional().describe('Most displayed text sources observed in this call (default: session limit, 160; link URLs have a separate budget of the same size). Values above 2000 are clamped.'),
   maxCandidates: positiveInteger.optional().describe('Most action, extraction or semantic candidates in this call (default: session limit, 250). Values above 2000 are clamped.'),
   exclude: z.array(z.string().min(1)).max(64).optional().describe('CSS selectors whose subtrees, including open shadow content, are left out of this observation, such as ads or navigation.'),
 };

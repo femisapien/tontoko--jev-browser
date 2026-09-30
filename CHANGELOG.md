@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Decision requests are smaller on the wire: repeated row/form context strings are sent once in a shared `contextTable` and referenced by `contextId`, and default-valued element flags are omitted (observe on a 40-row table with a 60-option select: ~99.6 KB to ~52.4 KB).
+- `act`, `observe` and `run` no longer send link URLs in their decision state; `extract` and semantic evidence keep them, and link `href` sources now have their own budget instead of counting toward `maxTexts`.
+- An `act`/`observe` request larger than the 128 KiB decision budget now fails with `OBSERVATION_LIMIT` before any provider call; every request budget is measured on the compact wire form.
+
 ## 0.13.0
 
 - Breaking: `playwright-core` (`>=1.62.0 <2`) and `zod` (`^4.2.0`) are now peer dependencies instead of bundled `playwright` and `zod` copies, so the package shares your project's Playwright and Zod; an older `playwright-core` fails with `CONFIG`. Yarn Berry users must add them explicitly. See `docs/migration.md`.

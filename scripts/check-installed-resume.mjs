@@ -3,7 +3,7 @@ import {spawn} from 'node:child_process';
 import {join} from 'node:path';
 import {Client} from '@modelcontextprotocol/client';
 import {StdioClientTransport} from '@modelcontextprotocol/client/stdio';
-import {httpServer,apiResult} from '../test/helpers.mjs';
+import {httpServer,apiResult,expandWire} from '../test/helpers.mjs';
 
 function processResult(args,{cwd,env,timeout=30000}){
   return new Promise((resolve,reject)=>{
@@ -33,7 +33,7 @@ export async function checkInstalledResume(pkg,directory,baseEnv){
   });
   const provider=await httpServer(async(req,res)=>{
     try{
-      let raw='';for await(const chunk of req)raw+=chunk;const request=JSON.parse(raw);
+      let raw='';for await(const chunk of req)raw+=chunk;const request=expandWire(JSON.parse(raw));
       const result=apiResult(request,(question,id)=>{
         if(id.startsWith('bind_')){
           const path=['/reference','/membershipCode'].find(value=>question.instructions.includes(JSON.stringify(value)));

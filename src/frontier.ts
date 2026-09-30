@@ -1,5 +1,5 @@
 import { BrowserError } from './errors.js';
-import type { DecisionEngine, DecisionRequest, DecisionResult } from './decision.js';
+import { DECISION_REQUEST_BYTES, decisionRequestBytes, type DecisionEngine, type DecisionRequest, type DecisionResult } from './decision.js';
 
 export interface DecisionUsage {
   requests: number;
@@ -20,7 +20,6 @@ export const emptyDecisionUsage = (): DecisionUsage => ({
 });
 
 const MAX_QUESTIONS = 64;
-const MAX_BYTES = 128 * 1024;
 
 type StateForQuestions = (questions: DecisionRequest['questions']) => DecisionRequest['state'];
 
@@ -33,7 +32,7 @@ function chunks(request: DecisionRequest, stateForQuestions?: StateForQuestions)
     while (count >= 1) {
       const questions = Object.fromEntries(entries.slice(offset, offset + count));
       candidate = { state: stateForQuestions ? stateForQuestions(questions) : request.state, questions };
-      if (Buffer.byteLength(JSON.stringify(candidate)) <= MAX_BYTES) break;
+      if (decisionRequestBytes(candidate) <= DECISION_REQUEST_BYTES) break;
       if (count === 1) throw new BrowserError('OBSERVATION_LIMIT', 'A decision question exceeds the 128 KiB request budget. Narrow the semantic scope.');
       count = Math.max(1, Math.floor(count / 2));
     }
