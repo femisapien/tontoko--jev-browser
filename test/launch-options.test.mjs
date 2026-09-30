@@ -11,7 +11,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { parseCLI } from '../dist/cli-options.js';
 import { JevBrowser } from '../dist/index.js';
 import { httpServer } from './helpers.mjs';
-import { chromium } from 'playwright';
+import { chromium } from 'playwright-core';
 import { createServer } from 'node:net';
 
 const cliFile = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
