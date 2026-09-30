@@ -14,6 +14,8 @@ jev-browser close --session visual
 
 For MCP, run jev-browser-mcp with --screen-only and --url. CLI and MCP setup can fix the browser context with --viewport, --reduced-motion, --color-scheme, --locale or --options-file. Discovery starts no browser and exposes only browser_screen and browser_close, plus browser_screen_decide when --vision-base-url and --vision-model configure opt-in [image understanding](image-understanding.md) for a text-only reviewer. Its first screen request starts the configured browser and performs the trusted initial navigation. Results carry actual MCP image blocks and separate metadata without base64 or local paths.
 
+To let the reviewer continue into a new tab the page opens, add --screen-follow-popups (SDK `screenFollowPopups: true`, which requires `screenOnly`). See [new tabs](#following-new-tabs). The option is fixed when a session starts, like the other launch options.
+
 Named sessions keep their mode for their lifetime. Reopening a normal session with --screen-only, or reopening a restricted session without that mode, fails before navigation. Restricted sessions cannot be reopened at another supplied URL. Individual commands cannot turn their mode off.
 
 ~~~ts
@@ -76,9 +78,20 @@ Browser-native dialogs, file choosers and new tabs are explicit capability limit
 
 - A file chooser is reported with `SCREEN_FILE_CHOOSER_UNSUPPORTED`; no file is selected.
 - In a screenOnly session, a native dialog (alert, confirm, prompt or beforeunload) is reported with `SCREEN_DIALOG_UNSUPPORTED` and then dismissed, like pressing Cancel. Dialogs that the resumed page opens next are dismissed too. The dialog text is never returned. A dialog opened by an input fails that input with `SCREEN_DIALOG_UNSUPPORTED`, whose outcome is unknown; one that opened between operations is reported by the next screen call, before any input is sent.
-- In a screenOnly session, a new tab opened by the observed page, for example by `window.open` or a link or form with `target="_blank"`, is reported with `SCREEN_POPUP_UNSUPPORTED` and then closed. A screen-only actor cannot see where it led. A tab that opens after an operation returned is reported by the next screen call, before any input is sent.
+- In a screenOnly session, a new tab opened by the observed page, for example by `window.open` or a link or form with `target="_blank"`, is reported with `SCREEN_POPUP_UNSUPPORTED` and then closed. A screen-only actor cannot see where it led. A tab that opens after an operation returned is reported by the next screen call, before any input is sent. To follow the tab instead, opt in with screenFollowPopups.
 
-Look again after either report; later observations continue on the original page. Dismissing a dialog is a browser input, so check the next image for its effect, for example a cancelled confirmation. Following new tabs is not supported.
+Look again after either report; later observations continue on the original page. Dismissing a dialog is a browser input, so check the next image for its effect, for example a cancelled confirmation.
+
+### Following new tabs
+
+With `screenFollowPopups: true` (CLI and MCP `--screen-follow-popups`, together with `--screen-only`), a new tab opened by the observed page becomes the observed page instead of being closed:
+
+- The first successful result that observes the new tab has a fresh observationId and `pageSwitched: 'popup'`; its frames show the new tab, and `navigated` refers to it. A tab opened by an input is usually observed by that input's own result. Playwright reports a tab only after its first navigation, so a slow tab can be reported by the next screen call instead.
+- A tab that opens between operations, or after an input's result, never receives input meant for the previous page: an input request then fails with `STALE_SCREEN` and `details.pageSwitched: 'popup'`, and no input is sent. The next look observes the new tab with `pageSwitched: 'popup'`.
+- The page that opened the tab stays open in the background, unobserved; it is not closed. When the followed tab closes, for example by calling `window.close()` after a sign-in, observation returns to the nearest still-open page that opened it, reported the same way with `pageSwitched: 'opener'`. An input that closes the followed tab can instead fail its capture with reason `page-closed`; the next look then returns to the opener.
+- Only tabs opened by the observed page are followed. `pageSwitched` is absent when the observed page did not change. Native dialogs and file choosers keep the behavior above.
+
+Without the option, the default behavior is unchanged.
 
 Without screenOnly, the ordinary tools own dialogs and tabs: a dialog stays pending (`DIALOG_PENDING`) until `handle_dialog`, and `SCREEN_POPUP_UNSUPPORTED` repeats while the new tab stays open, until `tabs` closes or selects it.
 
