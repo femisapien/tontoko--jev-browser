@@ -57,6 +57,8 @@ export class JevBrowser {
   private readonly nativeBrowser: NativeBrowser;
   private snapshotCapture?: Captured;
   private readonly options: BrowserOptions;
+  // #private: inspecting, logging or serializing the core cannot reveal the key.
+  readonly #apiKey?: string;
   private readonly timeoutMs: number;
   private readonly limits: { maxElements: number; maxTexts: number; maxCandidates: number };
   private readonly lifetime = new AbortController();
@@ -70,7 +72,8 @@ export class JevBrowser {
 
   constructor(options: BrowserOptions) {
     this.currentPage = options.page;
-    this.options = { ...options };
+    const { apiKey, ...rest } = options;
+    this.options = rest; this.#apiKey = apiKey;
     this.engineInstance = options.engine;
     this.timeoutMs = positiveInteger(options.timeoutMs ?? 30_000, 'timeoutMs');
     this.limits = {
@@ -87,7 +90,7 @@ export class JevBrowser {
       },
       resolve: (target, frame) => this.resolveNative(target, frame),
       validateURL: async url => this.validURL(url),
-    }, options);
+    }, this.options);
   }
   static async launch(options: BrowserLaunchOptions = {}): Promise<JevBrowser> {
     if ([options.userDataDir, options.cdpEndpoint, options.wsEndpoint].filter(Boolean).length > 1)
@@ -166,7 +169,7 @@ export class JevBrowser {
     }, 'screen');
   }
   private engine(): DecisionEngine {
-    return this.engineInstance ??= new JevDecisionEngine(this.options);
+    return this.engineInstance ??= new JevDecisionEngine({ ...this.options, apiKey: this.#apiKey });
   }
   private async exclusive<T>(options: OperationOptions, fn: (operation: Operation) => Promise<T>, command?: string): Promise<T> {
     if (this.closed) throw new BrowserError('CLOSED', 'This browser session is closed.');

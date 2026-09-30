@@ -48,8 +48,10 @@ Options:
   --model NAME  --idle-timeout-ms N  --help  --version
 
 Native operations, snapshots and assertions need no API key. AI operations use
-JEV_API_KEY (or TYPESAFE_API_KEY), or a compatible JEV_BASE_URL. Sessions and
-continuation IDs are local to the current directory and running browser core.
+JEV_API_KEY (or TYPESAFE_API_KEY) for hosted Jev, or a compatible JEV_BASE_URL,
+which never receives hosted keys: set JEV_ENDPOINT_API_KEY if it needs one.
+Sessions and continuation IDs are local to the current directory and running
+browser core.
 Exit codes: 0 succeeded, 1 error, 2 stopped/unverified run or pending dialog.
 Mutation failures are never automatically retried. Input values may appear on the page.
 `;

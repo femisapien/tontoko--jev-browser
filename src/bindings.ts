@@ -43,11 +43,13 @@ export const inputMetadata = (inputs: InputBinding[]) => inputs.map(input => ({
   available: true, applied: input.applied, ...(input.checkpointed?{checkpointed:true}:{}),
 }));
 
-/** Redact known value echoes, never protocol identifiers or generated replacement tokens. */
+/** Redact known string and number echoes, never protocol identifiers or generated replacement tokens. */
 export function privateFilter(inputs: InputBinding[]): <T>(data: T) => T {
   const replacements = new Map<string,string>();
-  for (const input of inputs) for (const value of Array.isArray(input.value) ? input.value : [input.value])
+  for (const input of inputs) for (const raw of Array.isArray(input.value) ? input.value : [input.value]) {
+    const value = typeof raw === 'number' ? String(raw) : raw;
     if (typeof value === 'string' && value && !replacements.has(value)) replacements.set(value, `[input:${input.path}]`);
+  }
   const publicTokens = new Set(inputs.flatMap(input => [input.path, `[input:${input.path}]`]));
   const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const alternatives = [...publicTokens, ...[...replacements.keys()].filter(value => value.length >= 3)].sort((a,b) => b.length-a.length);

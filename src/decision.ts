@@ -30,16 +30,26 @@ const wireResult = z.object({
   model: z.string(),
   usage: z.object({ input_tokens: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative() }),
 });
+const hostedOrigin = 'https://api.typesafe.ai';
+/** Empty or whitespace-only settings are unset, matching `.env` files that leave a key blank. */
+const setting = (value: string | undefined) => value?.trim() || undefined;
+const loopback = (host: string) => host === 'localhost' || host === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(host);
 
 export class JevDecisionEngine implements DecisionEngine {
   private readonly client: TypeSafeClient;
   constructor(options: JevOptions = {}) {
-    const baseURL = options.baseURL ?? process.env.JEV_BASE_URL;
-    const apiKey = options.apiKey ?? process.env.JEV_API_KEY ?? process.env.TYPESAFE_API_KEY ?? (baseURL ? 'local' : undefined);
-    if (!apiKey) throw new BrowserError('CONFIG', 'Set JEV_API_KEY or TYPESAFE_API_KEY, or configure a custom System One baseURL.');
+    const url = URL.parse(setting(options.baseURL) ?? setting(process.env.JEV_BASE_URL) ?? hostedOrigin);
+    if (!url || !['http:', 'https:'].includes(url.protocol)) throw new BrowserError('CONFIG', 'The decision baseURL must be an HTTP(S) URL.');
+    // Hosted keys from the environment stay with hosted Jev; another endpoint needs apiKey or JEV_ENDPOINT_API_KEY, else a keyless placeholder.
+    const hosted = url.origin === hostedOrigin;
+    const apiKey = setting(options.apiKey) ?? (hosted ? setting(process.env.JEV_API_KEY) ?? setting(process.env.TYPESAFE_API_KEY) : setting(process.env.JEV_ENDPOINT_API_KEY));
+    if (hosted && !apiKey) throw new BrowserError('CONFIG', 'Hosted Jev needs apiKey, JEV_API_KEY or TYPESAFE_API_KEY. A custom System One baseURL or JEV_BASE_URL needs no hosted key.');
+    if (apiKey && url.protocol === 'http:' && !loopback(url.hostname))
+      throw new BrowserError('CONFIG', 'An API key is sent only over HTTPS or to a loopback endpoint. Use an https:// decision baseURL.');
     this.client = new TypeSafeClient({
-      apiKey,
-      baseURL,
+      apiKey: apiKey ?? 'local',
+      // Always explicit, so the SDK's own TYPESAFE_BASE_URL cannot redirect a hosted key.
+      baseURL: url.href,
       defaultModel: options.model ?? process.env.JEV_MODEL,
       timeout: options.timeoutMs ?? 15_000,
       retry: { maxRetries: 0 },

@@ -76,3 +76,65 @@ test('default hosted endpoint still requires an API key', () => {
   try { assert.throws(()=>new sdk.JevDecisionEngine(),{code:'CONFIG'}); }
   finally { for(const [key,value] of Object.entries(saved)) value===undefined?delete process.env[key]:process.env[key]=value; }
 });
+
+const providerEnv=['JEV_API_KEY','TYPESAFE_API_KEY','JEV_BASE_URL','TYPESAFE_BASE_URL','JEV_ENDPOINT_API_KEY'];
+async function withEnv(values,body){
+  const saved=Object.fromEntries(providerEnv.map(key=>[key,process.env[key]]));
+  for(const key of providerEnv) delete process.env[key];
+  Object.assign(process.env,values);
+  try { return await body(); }
+  finally { for(const [key,value] of Object.entries(saved)) value===undefined?delete process.env[key]:process.env[key]=value; }
+}
+// Records where each request went and which credential it carried; nothing leaves the process.
+async function sent(options){
+  let seen;
+  await new sdk.JevDecisionEngine({...options,fetch:async(url,init)=>{seen={url:String(url),authorization:new Headers(init.headers).get('authorization')};return Response.json(apiResult(JSON.parse(init.body)));}}).decide(request);
+  return seen;
+}
+
+test('hosted keys from the environment are never sent to a custom System One endpoint', async () => {
+  for(const [env,options,url] of [
+    [{JEV_API_KEY:'HOSTED-TEST-KEY'},{baseURL:'http://127.0.0.1:8765'},'http://127.0.0.1:8765/v1/systemone'],
+    [{JEV_API_KEY:'HOSTED-TEST-KEY',JEV_BASE_URL:'http://127.0.0.1:8765'},{},'http://127.0.0.1:8765/v1/systemone'],
+    [{TYPESAFE_API_KEY:'HOSTED-TEST-KEY',JEV_BASE_URL:'https://proxy.example.invalid/jev'},{},'https://proxy.example.invalid/jev/v1/systemone'],
+    [{JEV_API_KEY:'HOSTED-TEST-KEY'},{baseURL:'http://api.typesafe.ai'},'http://api.typesafe.ai/v1/systemone'],
+  ]) await withEnv(env,async()=>assert.deepEqual(await sent(options),{url,authorization:'Bearer local'},JSON.stringify({env,options})));
+});
+test('the SDK TYPESAFE_BASE_URL cannot redirect a hosted key away from hosted Jev', async () => {
+  await withEnv({JEV_API_KEY:'HOSTED-TEST-KEY',TYPESAFE_BASE_URL:'http://127.0.0.1:8765'},async()=>{
+    assert.deepEqual(await sent({}),{url:'https://api.typesafe.ai/v1/systemone',authorization:'Bearer HOSTED-TEST-KEY'});
+    assert.deepEqual(await sent({baseURL:'https://api.typesafe.ai/'}),{url:'https://api.typesafe.ai/v1/systemone',authorization:'Bearer HOSTED-TEST-KEY'});
+  });
+});
+test('a custom endpoint is authenticated only by an explicit apiKey or JEV_ENDPOINT_API_KEY', async () => {
+  await withEnv({JEV_API_KEY:'HOSTED-TEST-KEY'},async()=>{
+    assert.equal((await sent({baseURL:'https://proxy.example.invalid',apiKey:'PROXY-TEST-KEY'})).authorization,'Bearer PROXY-TEST-KEY');
+    assert.equal((await sent({apiKey:'EXPLICIT-TEST-KEY'})).authorization,'Bearer EXPLICIT-TEST-KEY');
+  });
+  await withEnv({JEV_API_KEY:'HOSTED-TEST-KEY',JEV_ENDPOINT_API_KEY:'ENDPOINT-TEST-KEY',JEV_BASE_URL:'https://proxy.example.invalid'},async()=>{
+    assert.equal((await sent({})).authorization,'Bearer ENDPOINT-TEST-KEY');
+    assert.equal((await sent({baseURL:'https://api.typesafe.ai'})).authorization,'Bearer HOSTED-TEST-KEY');
+  });
+});
+test('credentials are refused over plain HTTP to a non-loopback endpoint', async () => {
+  await withEnv({},async()=>{
+    for(const options of [{apiKey:'TEST-KEY',baseURL:'http://example.invalid:8765'},{apiKey:'TEST-KEY',baseURL:'http://10.0.0.5'}])
+      assert.throws(()=>new sdk.JevDecisionEngine({...options,fetch:async()=>assert.fail('No request may be sent.')}),{code:'CONFIG',message:/HTTPS or to a loopback/});
+    for(const baseURL of ['http://localhost:8765','http://127.0.0.2:8765','http://[::1]:8765'])
+      assert.equal((await sent({apiKey:'TEST-KEY',baseURL})).authorization,'Bearer TEST-KEY',baseURL);
+    assert.equal((await sent({baseURL:'http://example.invalid:8765'})).authorization,'Bearer local');
+  });
+  await withEnv({JEV_ENDPOINT_API_KEY:'ENDPOINT-TEST-KEY',JEV_BASE_URL:'http://example.invalid:8765'},async()=>
+    assert.throws(()=>new sdk.JevDecisionEngine(),{code:'CONFIG'}));
+});
+test('blank keys are unset and do not block a custom endpoint', async () => {
+  for(const [env,options] of [[{JEV_API_KEY:''},{baseURL:'http://127.0.0.1:8765'}],[{TYPESAFE_API_KEY:'  ',JEV_BASE_URL:'http://127.0.0.1:8765'},{}],[{JEV_ENDPOINT_API_KEY:' '},{baseURL:'http://127.0.0.1:8765',apiKey:''}]])
+    await withEnv(env,async()=>assert.equal((await sent(options)).authorization,'Bearer local',JSON.stringify({env,options})));
+  await withEnv({JEV_API_KEY:'HOSTED-TEST-KEY',JEV_BASE_URL:' '},async()=>assert.deepEqual(await sent({}),{url:'https://api.typesafe.ai/v1/systemone',authorization:'Bearer HOSTED-TEST-KEY'}));
+  await withEnv({JEV_API_KEY:'',TYPESAFE_API_KEY:' '},async()=>assert.throws(()=>new sdk.JevDecisionEngine({apiKey:''}),{code:'CONFIG',message:/^Hosted Jev needs/}));
+});
+test('an invalid decision baseURL is a configuration error', async () => {
+  await withEnv({JEV_API_KEY:'HOSTED-TEST-KEY'},async()=>{
+    for(const baseURL of ['not a url','ftp://127.0.0.1:8765']) assert.throws(()=>new sdk.JevDecisionEngine({baseURL}),{code:'CONFIG'},baseURL);
+  });
+});

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Breaking: `JEV_API_KEY` and `TYPESAFE_API_KEY` are sent only to hosted Jev at `https://api.typesafe.ai`. A custom `baseURL` / `JEV_BASE_URL` is authenticated only by an explicit `apiKey` option or the new `JEV_ENDPOINT_API_KEY`, a key is never sent over plain HTTP to a non-loopback host (`CONFIG`), and the upstream SDK's `TYPESAFE_BASE_URL` no longer redirects hosted keys. See `docs/migration.md`.
+- Empty or whitespace-only API key variables count as unset, so `JEV_API_KEY=` with a custom endpoint no longer fails with a `CONFIG` error that asks for the endpoint already configured.
+- An explicit `apiKey` no longer appears when a `JevBrowser` is inspected, logged or serialized with `JSON.stringify`.
+- Numeric input values echoed by the page are redacted from goal requests and results, like string values.
+- Persistent sessions no longer corrupt multibyte UTF-8 text in command bodies larger than one stream chunk, such as long Japanese text sent to `storage` or `type`.
+
 ## 0.11.0
 
 - Added `jev-browser install [chromium|firefox|webkit] [--dry-run]`, which installs the browser build for the Playwright version this package bundles. A consumer that pins a different Playwright no longer needs to resolve this package's Playwright CLI by hand.

@@ -47,6 +47,13 @@ test('goal resilience: redacting one value cannot corrupt a previous replacement
   assert.equal(filter({ text: 'Secret Name name' }).text, '[input:/name] [input:/tag]');
 });
 
+test('goal resilience: numeric private inputs echoed by the page are redacted like strings', () => {
+  const filter = privateFilter(flattenInputs({ phone: 5551234567, quantity: 2, ratio: 0.75 }));
+  const result = filter({ page: { texts: [{ text: '5551234567' }, { text: 'Call 5551234567 today' }, { text: '2' }, { text: 'Ratio 0.75' }] }, usage: { inputTokens: 2 } });
+  assert.deepEqual(result.page.texts.map(entry => entry.text), ['[input:/phone]', 'Call [input:/phone] today', '[input:/quantity]', 'Ratio [input:/ratio]']);
+  assert.equal(result.usage.inputTokens, 2);
+});
+
 test('goal resilience: ordinary data equal to protocol words can still be saved and verified', async t => {
   const fields = [{ path: '/name', label: 'name' }, { path: '/state', label: 'state' }, { path: '/operation', label: 'operation' }];
   const { core, records, attempts } = await goalFixture(t, browser, fields);

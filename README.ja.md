@@ -58,7 +58,7 @@ const result = await browser.run(
 
 ## 自然言語とSDK
 
-hosted Jevを使う場合は`JEV_API_KEY`を設定します。Jev互換のSystem One endpointを使う場合は`JEV_BASE_URL=http://127.0.0.1:8765`のようにbase URLだけ指定でき、JevのAPIキーは不要です。endpointは`POST /v1/systemone`で同じ`state/questions -> model/answers/usage`形式を実装する必要があります。APIキーをリポジトリやCLI引数に書き込まないでください。
+hosted Jevを使う場合は`JEV_API_KEY`を設定します。Jev互換のSystem One endpointを使う場合は`JEV_BASE_URL=http://127.0.0.1:8765`のようにbase URLだけ指定でき、JevのAPIキーは不要です。`JEV_API_KEY`／`TYPESAFE_API_KEY`はhosted Jev（`https://api.typesafe.ai`）にだけ送られ、custom endpointには送られません。endpoint側でキーが必要な場合は`JEV_ENDPOINT_API_KEY`（SDKでは`apiKey`）を指定します。キーはHTTPSかloopbackアドレスにだけ送られ、それ以外は`CONFIG`エラーになります。空のキー変数は未設定として扱います。endpointは`POST /v1/systemone`で同じ`state/questions -> model/answers/usage`形式を実装する必要があります。APIキーをリポジトリやCLI引数に書き込まないでください。
 
 ```ts
 const browser = new JevBrowser({ page });
