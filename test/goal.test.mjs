@@ -1,7 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JevBrowser } from '../dist/index.js';
-import { fixtureBrowser, engine, httpServer } from './helpers.mjs';
+import { fixtureBrowser, engine } from './helpers.mjs';
 let browser;
 before(async () => { browser = await fixtureBrowser(); });
 after(async () => { await browser?.close(); });
@@ -71,7 +71,7 @@ test('goal: a caller completion oracle prevents model-complete before the requir
 });
 
 test('goal: native selects resolve exact labels locally without exposing input values',async t=>{
-  const {core,page,records,decider}=await fixture(t,[{path:'/email',label:'email'},{path:'/course',label:'course',type:'select',options:['Choose','Gamba','Piano']}]);
+  const {core,records,decider}=await fixture(t,[{path:'/email',label:'email'},{path:'/course',label:'course',type:'select',options:['Choose','Gamba','Piano']}]);
   const result=await core.run('Add a contact with the supplied email and course, then Save.',{values:{email:'lesson@example.invalid',course:'Gamba'}});
   assert.equal(result.status,'complete');assert.equal(records[0]['/course'],'Gamba');
   assert.ok(!JSON.stringify(decider.requests).includes('lesson@example.invalid'));

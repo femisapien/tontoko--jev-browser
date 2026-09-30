@@ -5,6 +5,7 @@ Use Node.js 22.15+ and the locked dependencies. Do not send production data to a
 ```sh
 npm ci
 npx playwright install chromium
+npm run lint
 npm run check
 npm run check:examples
 npm run check:package
