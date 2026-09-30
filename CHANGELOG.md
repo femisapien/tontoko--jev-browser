@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.1
 
 - A screen `scroll` now captures after the scroll settles, including smooth scrolling, instead of racing the wheel. The returned image no longer shows the unscrolled page, and the next input with its `observationId` no longer fails with `STALE_SCREEN`.
 - The screen journal `header` row's `startedAt` now reports when the session was created instead of the later time the first row was written.
