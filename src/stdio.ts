@@ -42,7 +42,7 @@ export function startMcpStdio(options: BrowserLaunchOptions = {}, initialURL?: s
   };
   const report = (error: unknown) => { process.stderr.write(`${JSON.stringify(publicError(error))}\n`); };
   const handle = serveStdio(() => {
-    const server = createMcpServer(getBrowser, { screenOnly: options.screenOnly, capabilities });
+    const server = createMcpServer(getBrowser, { screenOnly: options.screenOnly, capabilities, vision: options.vision !== undefined });
     server.server.onclose = () => { void closeBrowser().catch(report); };
     return server;
   }, { onerror: report });

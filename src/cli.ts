@@ -56,6 +56,11 @@ Options:
   --allow-evaluate           Same as --caps evaluate: trusted page JS, never Node code
   --screen-only              Immutable session mode: screen pixels/physical inputs and close only
   --model NAME  --idle-timeout-ms N  --help  --version
+  --vision-base-url URL  --vision-model NAME
+                             Opt-in screen_decide: an OpenAI-compatible Chat Completions
+                             endpoint (https, or http to loopback) and image-capable model.
+                             Screenshots go there only when screen_decide runs. Key from
+                             JEV_VISION_API_KEY only. Fixed when a session opens
 
 Native operations, snapshots and assertions need no API key. AI operations use
 JEV_API_KEY (or TYPESAFE_API_KEY) for hosted Jev, or a compatible JEV_BASE_URL,

@@ -16,7 +16,7 @@ const definitions = {
   browser: { type: 'string' }, 'cdp-endpoint': { type: 'string' }, 'ws-endpoint': { type: 'string' },
   'user-data-dir': { type: 'string' }, 'storage-state': { type: 'string' }, 'output-dir': { type: 'string' },
   'file-root': { type: 'string', multiple: true }, 'idle-timeout-ms': { type: 'string' },
-  'options-file': { type: 'string' }, viewport: { type: 'string' }, 'reduced-motion': { type: 'boolean' }, 'color-scheme': { type: 'string' }, locale: { type: 'string' },
+  'options-file': { type: 'string' }, 'vision-base-url': { type: 'string' }, 'vision-model': { type: 'string' }, viewport: { type: 'string' }, 'reduced-motion': { type: 'boolean' }, 'color-scheme': { type: 'string' }, locale: { type: 'string' },
 } as const;
 const size = z.object({ width: z.number().int().positive(), height: z.number().int().positive() }).strict();
 // Common Playwright fields are checked here; Playwright validates the rest when the browser starts.
@@ -76,6 +76,10 @@ export function parseCLI(argv = process.argv.slice(2)) {
   const contextOptions = { ...file.contextOptions, ...contextFlags(values) };
   // --allow-evaluate is the older spelling of --caps evaluate.
   const capabilities = parseCapabilities(values.caps, values['allow-evaluate']);
+  // Image understanding is opt-in and needs both flags; its key comes only from JEV_VISION_API_KEY, never a Jev key.
+  const visionBaseURL = values['vision-base-url']?.trim() || undefined, visionModel = values['vision-model']?.trim() || undefined;
+  if ((visionBaseURL === undefined) !== (visionModel === undefined)) throw new BrowserError('INVALID_ARGUMENT', '--vision-base-url and --vision-model must be given together.');
+  const visionKey = process.env.JEV_VISION_API_KEY?.trim() || undefined;
   const options: BrowserLaunchOptions = {
     ...file, browser: browserName as BrowserLaunchOptions['browser'], headless: values.headed ? false : file.headless ?? true,
     timeoutMs: positive(values['timeout-ms'], '--timeout-ms'), model: values.model,
@@ -85,6 +89,7 @@ export function parseCLI(argv = process.argv.slice(2)) {
     // CLI/MCP uploads have no implicit read root; --file-root . grants the working directory.
     fileRoots: values['file-root'] ?? [], allowEvaluate: capabilities.includes('evaluate'), screenOnly: values['screen-only'],
     ...(Object.keys(contextOptions).length ? { contextOptions } : {}),
+    ...(visionBaseURL && visionModel ? { vision: { baseURL: visionBaseURL, model: visionModel, ...(visionKey ? { apiKey: visionKey } : {}) } } : {}),
   };
   return { values, positionals, options, capabilities };
 }

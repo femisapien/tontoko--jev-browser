@@ -7,7 +7,7 @@ const screen = () => ({
   frames: [{ mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lXcAAAAASUVORK5CYII=', capturedAt: '2026-09-24T00:00:00.000Z', elapsedMs: 1 }],
   action: { id: 'look-1', kind: 'look', startedAt: '2026-09-24T00:00:00.000Z', durationMs: 1, outcome: 'observed' },
 });
-const request = () => ({ state: { task: 'Interpret this fixture' }, questions: { visible: { query: 'Is the view legible?', criteria: { yes: 'Legible', unknown: 'Not enough evidence' } } } });
+const request = () => ({ state: { task: 'Interpret this fixture' }, questions: { visible: { type: 'choice', instructions: 'Is the view legible?', criteria: { yes: 'Legible', unknown: 'Not enough evidence' } } } });
 
 test('image decisions pass only an explicit pixel-derived description to the existing decision engine', async () => {
   const boundary = await import('../dist/image-understanding.js').catch(error => {
@@ -67,7 +67,7 @@ test('one vision request carries ordered original PNGs and geometry, not expecte
   original.frames.push({ ...original.frames[0], capturedAt: '2026-09-24T00:00:00.500Z' });
   const req = request();
   req.state.hiddenOracle = 'oracle-must-not-reach-vision';
-  req.questions.second = { query: 'Another independent question', criteria: { unknown: 'Uncertain' } };
+  req.questions.second = { type: 'choice', instructions: 'Another independent question', criteria: { unknown: 'Uncertain' } };
   let decisionCalls = 0;
   const result = await decideFromScreen(original, req, { understand: adapter, engine: { decide: async value => {
     decisionCalls++;
@@ -92,14 +92,43 @@ test('one vision request carries ordered original PNGs and geometry, not expecte
   assert.equal(result.evidence.model, 'fixture-vl');
 });
 
-test('an authentication-free explicit endpoint receives no inherited Jev/cloud key', async t => {
+test('an authentication-free explicit endpoint receives no inherited Jev, endpoint or cloud key', async t => {
   const p = await provider(t);
-  const before = process.env.JEV_API_KEY;
-  process.env.JEV_API_KEY = 'do-not-inherit-test-only';
-  t.after(() => { if (before === undefined) delete process.env.JEV_API_KEY; else process.env.JEV_API_KEY = before; });
+  const names = ['JEV_API_KEY', 'TYPESAFE_API_KEY', 'JEV_ENDPOINT_API_KEY', 'JEV_VISION_API_KEY', 'OPENAI_API_KEY'];
+  const before = Object.fromEntries(names.map(name => [name, process.env[name]]));
+  for (const name of names) process.env[name] = `do-not-inherit-${name}`;
+  t.after(() => { for (const name of names) if (before[name] === undefined) delete process.env[name]; else process.env[name] = before[name]; });
   await new ChatCompletionsImageUnderstanding({ baseURL: p.baseURL, model: 'fixture' }).describe(screen());
   assert.equal(p.calls[0].authorization, undefined);
-  assert.equal(JSON.stringify(p.calls[0].body).includes('do-not-inherit-test-only'), false);
+  assert.equal(JSON.stringify(p.calls[0].body).includes('do-not-inherit'), false);
+});
+
+test('screenshots and keys go only over HTTPS or to loopback, and the key never appears when the adapter is inspected', async () => {
+  for (const baseURL of ['http://vision.example.test/v1', 'http://10.0.0.5:8000/v1', 'http://[::ffff:7f00:1]/v1'])
+    assert.throws(() => new ChatCompletionsImageUnderstanding({ baseURL, model: 'fixture' }), { code: 'CONFIG' });
+  for (const baseURL of ['https://vision.example.test/v1', 'http://localhost:8000/v1', 'http://127.0.0.1:8000/v1', 'http://[::1]:8000/v1'])
+    assert.doesNotThrow(() => new ChatCompletionsImageUnderstanding({ baseURL, model: 'fixture' }));
+  const { inspect } = await import('node:util');
+  const adapter = new ChatCompletionsImageUnderstanding({ baseURL: 'https://vision.example.test/v1', model: 'fixture', apiKey: 'secret-vision-key-test-only' });
+  assert.equal(JSON.stringify(adapter).includes('secret-vision-key'), false);
+  assert.equal(inspect(adapter, { depth: 5 }).includes('secret-vision-key'), false);
+});
+
+test('a blank explicit key counts as unset', async t => {
+  const p = await provider(t);
+  await new ChatCompletionsImageUnderstanding({ baseURL: p.baseURL, model: 'fixture', apiKey: '  ' }).describe(screen());
+  assert.equal(p.calls[0].authorization, undefined);
+});
+
+test('a saved original frame path is kept in evidence but sent to neither model', async t => {
+  const p = await provider(t);
+  const original = screen(); original.frames[0].path = '/private/fixture-only/frame.png';
+  let decided;
+  const result = await decideFromScreen(original, request(), { understand: new ChatCompletionsImageUnderstanding({ baseURL: p.baseURL, model: 'fixture' }),
+    engine: { decide: async value => { decided = value; return { answers: {} }; } } });
+  assert.equal(result.evidence.frames[0].path, '/private/fixture-only/frame.png');
+  assert.equal(JSON.stringify(decided).includes('/private/fixture-only'), false);
+  assert.equal(JSON.stringify(p.calls[0].body).includes('/private/fixture-only'), false);
 });
 
 test('failed image conversion stops before Jev and does not retry or expose provider details', async t => {
@@ -149,7 +178,7 @@ test('caller/adaptor mutation during conversion cannot alter the observation, qu
     await suspended;
     return { text: 'No readable control.' };
   } }, engine: { decide: async input => {
-    assert.equal(input.questions.visible.query, 'Is the view legible?');
+    assert.equal(input.questions.visible.instructions, 'Is the view legible?');
     assert.equal(input.state.context.task, 'Interpret this fixture');
     assert.equal(input.state.visual.viewport.width, 1);
     input.state.visual.viewport.width = 800;
@@ -157,7 +186,7 @@ test('caller/adaptor mutation during conversion cannot alter the observation, qu
     return { answers: {} };
   } } });
   original.frames[0].data = 'caller-mutated'; original.viewport.width = 700;
-  req.questions.visible.query = 'changed'; req.state.task = 'changed';
+  req.questions.visible.instructions = 'changed'; req.state.task = 'changed';
   release();
   const result = await resultPromise;
   assert.equal(result.evidence.viewport.width, 1);

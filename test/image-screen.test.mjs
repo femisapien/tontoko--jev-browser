@@ -30,7 +30,7 @@ test('real captured viewport flows through vision then the existing System One e
     assert.equal('images' in body, false);
     return new Response(JSON.stringify({ answers: { action: { choice: 'save', confidence: 0.61 } }, model: 'fixture-systemone', usage: { input_tokens: 30, output_tokens: 5 } }));
   } });
-  const result = await decideFromScreen(captured, { state: { goal: 'Save once' }, questions: { action: { query: 'Which control is visibly labelled for the goal?', criteria: { save: 'Save', unknown: 'Not identifiable from visible evidence' } } } }, { understand, engine });
+  const result = await decideFromScreen(captured, { state: { goal: 'Save once' }, questions: { action: { type: 'choice', instructions: 'Which control is visibly labelled for the goal?', criteria: { save: 'Save', unknown: 'Not identifiable from visible evidence' } } } }, { understand, engine });
   assert.equal(imageCalls, 1); assert.equal(jevCalls, 1);
   assert.equal(result.decision.answers.action.confidence, 0.61);
   assert.equal(result.evidence.freshness, 'snapshot');
