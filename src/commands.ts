@@ -41,7 +41,7 @@ const descriptions: Partial<Record<CommandName, string>> = {
   screen: 'Observe viewport pixels or send one physical input. Start with action look. click, move, drag, scroll, type, press, back, forward and reload require the latest observationId; field descriptions state each action\'s arguments. Rejected requests keep that observationId usable; after failed captures, back, forward or reload can recover without one. Returns fresh images, real timestamps and whether the main frame navigated, never DOM, selectors, labels or URL metadata.',
   goto: 'Navigate to an HTTP(S) URL. Alias for navigate.',
   navigate: 'Navigate the selected tab to an HTTP(S) URL.',
-  snapshot: 'Read accessible controls and source text, with short-lived element references. No model call.',
+  snapshot: 'Read accessible controls and source text, with short-lived element references. Replaces earlier refs and any pending observe plan; the page is unchanged. No model call.',
   observe: 'Use Jev to choose one grounded action without executing it. Values are explicit named local inputs. Returns a single-use plan or null.',
   act: 'Use Jev to execute one instruction, or execute a previous planId. Literal input text belongs in named values. No automatic mutation retries.',
   extract: 'Copy source-grounded data. Use fields for scalar fields or JSON Schema for nested objects and arrays. recordsScope selects repeated DOM rows/cards. Returns data and source evidence.',

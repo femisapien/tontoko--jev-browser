@@ -27,6 +27,10 @@
 - `SCREEN_FAILED` and `SCREEN_INTERRUPTED` add a sanitized `details.reason` (`timeout`, `cancelled`, `navigation`, `page-closed`, `page-crashed`, `dialog` or `unknown`), and SDK callers get the underlying error as `cause`. While no current observation exists, `back`, `forward` and `reload` may omit `observationId`, so repeated capture failures are no longer a dead end.
 - A native file chooser is reported once with `SCREEN_FILE_CHOOSER_UNSUPPORTED`, and later screen calls continue on the same page instead of failing permanently.
 - The screen journal starts with a `header` row recording the jev-browser, Playwright and browser versions, the viewport and redacted launch options. Each journaled frame adds `sha256`, `width` and `height`. Existing fields are unchanged.
+- Added `--viewport WxH`, `--reduced-motion`, `--color-scheme` and `--locale` to the CLI and MCP server, plus `--options-file FILE` for JSON launch and context options (`launchOptions`, `contextOptions`, `storageState`, profile and endpoint fields). Explicit flags win over the file, and invalid fields are reported by name.
+- The MCP server runs tool calls one at a time in arrival order, so parallel calls wait instead of returning `BUSY`. Cancellation and an explicit `timeoutMs` include the wait; `browser_close` is not queued.
+- A failed lazy MCP launch is no longer cached, and a crashed or disconnected browser is replaced on the next tool call instead of failing every later call. Screen-only sessions still end after a failed startup or a lost browser.
+- Documented that `browser_snapshot` and other read-only tools replace short-lived refs and any pending observe plan, although they do not change the page.
 
 ## 0.11.0
 

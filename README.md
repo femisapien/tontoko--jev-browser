@@ -108,6 +108,15 @@ A named session survives separate CLI invocations. Its authenticated loopback en
 Every command accepts `--args JSON`, and `--args -` reads arguments from stdin. `session` is also available as a JSONL pipe for tools that keep stdin open. All results are JSON. An error is `{"ok":false,"error":{"code":"…","message":"…","retryable":false}}`; see [error codes](docs/api.md#errors-and-automation). Exit status is `0` for command success, `1` for errors/assertion failures, and `2` for a stopped/unverified agent or a pending dialog.
 
 ```sh
+npx jev-browser open https://example.com --session mobile \
+  --viewport 390x844 --reduced-motion --color-scheme dark --locale fr-FR
+npx jev-browser open https://example.com --session device --options-file device.json
+# device.json: {"contextOptions":{"viewport":{"width":390,"height":844},"deviceScaleFactor":3,"isMobile":true,"hasTouch":true,"timezoneId":"Europe/Paris"}}
+```
+
+`--viewport WxH`, `--reduced-motion`, `--color-scheme light|dark|no-preference` and `--locale TAG` set Playwright context options. `--options-file FILE` reads JSON with the launch fields of `JevBrowser.launch()` options: `browser`, `headless`, `launchOptions`, `contextOptions`, `storageState`, `userDataDir`, `cdpEndpoint` and `wsEndpoint`. `launchOptions` and `contextOptions` take Playwright's `LaunchOptions` and `BrowserContextOptions`. Explicit flags win over the file (per field inside `contextOptions`), and the file wins over `JEV_BROWSER`. Other keys and invalid values are rejected with the field named. Relative paths resolve against the working directory. These options apply when a browser starts: a one-shot command, `open` of a new session, or the MCP server's first tool call. An existing session keeps the options it was opened with, and a browser attached over CDP keeps its existing context.
+
+```sh
 npx jev-browser fill 'input[name=email]' 'user@example.invalid' --session work
 npx jev-browser assert --args '{"target":"input[name=email]","property":"value","expected":"user@example.invalid"}' --session work
 ```
@@ -142,7 +151,9 @@ After installing the tarball, configure your MCP client:
 }
 ```
 
-The environment entry is unnecessary for native operations. Prefer your client's secret store over putting real keys into committed JSON. Browser launch is lazy: tool discovery does not start a browser.
+The environment entry is unnecessary for native operations. Prefer your client's secret store over putting real keys into committed JSON. Browser launch is lazy: tool discovery does not start a browser. The server accepts the CLI launch flags, for example `"args": [".../mcp-stdio.js", "--viewport", "390x844", "--options-file", "/absolute/path/device.json"]`. If a launch fails or the browser disconnects, the next tool call starts a new browser; no call is retried automatically. In `--screen-only` mode a failed startup or a lost browser is final, as `browser_close` is.
+
+Tool calls to one server run one at a time in arrival order, so parallel calls wait instead of returning `BUSY`. A waiting call ends when the client cancels it, and an explicit `timeoutMs` argument includes the wait. `browser_close` is not queued, so it can stop a long-running call. Read-only tools do not change the page, but `browser_snapshot`, `browser_observe`, `browser_extract` and `browser_semantic_locate` replace this session's short-lived refs and any pending `browser_observe` plan.
 
 `browser_snapshot` provides refs for `browser_click`, `browser_type`, and other native tools. `browser_act`, `browser_observe`, `browser_extract`, and `browser_run` use the **same core** as the SDK. Native `browser_assert` verifies facts without asking a model. Tools also cover tabs, frames, dialogs, uploads/downloads, screenshots, PDF, mouse/keyboard, storage, cookies, routing, traces, console messages, and request metadata. Console messages, request metadata and downloads are reported for the selected tab unless `allTabs` is set; each entry carries a `pageId` that matches `browser_tabs`, and a download keeps a stable `id` for saving or cancelling it.
 

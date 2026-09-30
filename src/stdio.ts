@@ -9,21 +9,29 @@ export function startMcpStdio(options: BrowserLaunchOptions = {}, initialURL?: s
   let browser: Promise<JevBrowser> | undefined;
   let ownedBrowser: JevBrowser | undefined;
   let closing = false;
+  const lost = new WeakSet<JevBrowser>();
   const getBrowser = async () => {
     if (closing) throw new BrowserError('CLOSED', 'This browser session is closed.');
     if (browser) {
-      const current = browser, core = await current;
-      if (closing || core.isClosed && options.screenOnly)
+      const current = browser, core = await current, ended = core.isClosed || lost.has(core);
+      if (closing || ended && options.screenOnly)
         throw new BrowserError('CLOSED', 'This browser session is closed.');
-      if (!core.isClosed) return core;
+      if (!ended) return core;
       if (browser === current) browser = undefined;
+      // The browser is already gone; releasing the core cannot fail the replacement launch.
+      await core.close().catch(() => undefined);
     }
-    return browser ??= JevBrowser.launch(options).then(async core => {
+    const launching = browser ??= JevBrowser.launch(options).then(async core => {
       ownedBrowser = core;
       if (closing) { await core.close(); throw new BrowserError('CLOSED', 'This browser session is closed.'); }
+      // A crashed, killed or disconnected browser closes its context.
+      core.page.context().once('close', () => { lost.add(core); });
       try { if (initialURL) await core.goto(initialURL); return core; }
       catch (error) { await core.close(); throw error; }
     });
+    // An ordinary failed launch is not cached, so a later call can launch again; screen-only startup stays final.
+    if (!options.screenOnly) launching.catch(() => { if (browser === launching) browser = undefined; });
+    return launching;
   };
   const closeBrowser = async () => {
     closing = true;

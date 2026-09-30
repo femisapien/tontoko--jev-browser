@@ -11,7 +11,7 @@ For visible UX/discoverability review, use an isolated `--screen-only` session a
 
 For a whole creation task, prefer one `run --session task --args JSON` with `instruction` and nested `values`; use `browser_run` in MCP. The runtime batches judgments, fills serially, saves and checks a new result. Inspect `verification.readback`/`unobserved` and `effects`; never repeat an `unknown` commit. A `continuation.id` on the result or `error.partial` can be resumed with `resume ID --session task` / `browser_resume` in the same running session; unknown saves are reconciled read-only first. Existing values and observation scope cannot change. Inspect ordered `checkpoints` separately from final verification. Optional `expect` uses the native read-only assertion schema. Use the low-level sequence below for direct control or unsupported widgets.
 
-1. Open an isolated named session: `jev-browser open URL --session task`.
+1. Open an isolated named session: `jev-browser open URL --session task`. Add `--viewport WxH`, `--reduced-motion` or `--options-file FILE` when the check needs a specific viewport, motion preference or device.
 2. Read `snapshot --session task`. Use the returned refs for native actions, or trusted caller-authored selectors. Re-observe after navigation or replacement; never invent refs.
 3. Use `click REF`, `fill REF TEXT`, `press Enter`, or another native command. All commands also accept `--args JSON`. For natural-language target selection use `act INSTRUCTION --values JSON`.
 4. Use deterministic `assert --args '{"target":"selector","property":"text","expected":"Saved"}'` to establish facts. AI completion is not a test pass.

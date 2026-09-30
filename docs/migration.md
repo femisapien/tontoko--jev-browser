@@ -10,6 +10,8 @@ Take a new snapshot and use **this server's refs**, not refs from an old Playwri
 
 Use `browser_act` for natural-language action selection and `browser_assert` for deterministic verification. Tool cancellation propagates to the shared core. A pending dialog is explicit and can be handled in the next call.
 
+Playwright MCP's `--viewport-size` and `--config` correspond to `--viewport WxH` and `--options-file FILE`. The file holds the launch fields of `JevBrowser.launch()` options (`launchOptions`, `contextOptions`, `storageState` and so on), not Playwright MCP's configuration format.
+
 Page-side `browser_evaluate` is available only with `--allow-evaluate`, and currently accepts a page function rather than a target-bound function. Arbitrary Node-side `browser_run_code` is deliberately not provided; write that orchestration in the SDK using `browser.page`. Browser extensions and proprietary service integration are not included; use CDP or a Playwright WebSocket endpoint when attaching to another browser.
 
 ## Playwright CLI
@@ -17,6 +19,7 @@ Page-side `browser_evaluate` is available only with `--allow-evaluate`, and curr
 | Workflow | Jev Browser |
 | --- | --- |
 | Open a retained browser | `open URL --session work` |
+| Emulate a viewport or device | `open URL --session work --viewport 390x844`, or `--options-file FILE` for other context options |
 | Read the page | `snapshot --session work` |
 | Click/type by ref | `click REF`, `fill REF TEXT`, with `--session work` |
 | Select/check/keyboard | `select REF VALUE`, `check REF`, `uncheck REF`, `press Enter` |

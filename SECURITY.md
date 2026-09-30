@@ -24,7 +24,7 @@ Native operations, screenshots, assertions, navigation, and tool discovery do no
 
 ## Files and profiles
 
-Native uploads default to the current working directory as their read root; use a dedicated `--file-root` for tighter access. Explicit launch options such as `--storage-state` and `--user-data-dir` grant access to the specified profile. Use test profiles, not your daily browser profile.
+Native uploads default to the current working directory as their read root; use a dedicated `--file-root` for tighter access. Explicit launch options such as `--storage-state` and `--user-data-dir` grant access to the specified profile. Use test profiles, not your daily browser profile. An `--options-file` has the same authority as flags: its Playwright launch and context options can choose the browser executable and arguments, proxies, recordings and HTTP credentials. MCP tool calls cannot change launch options.
 
 Artifacts default to `.jev-browser/artifacts`. Traversal, existing output paths and symlinked intermediate directories are refused. Inputs are resolved before checking allowed roots. These checks do not defend against a malicious local process running as the same OS user. Do not place secrets or build credentials in file roots exposed to an automation client.
 
