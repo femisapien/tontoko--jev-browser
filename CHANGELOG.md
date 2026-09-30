@@ -6,6 +6,7 @@
 - Row, list, form and record context strings sent to the decision endpoint no longer include text typed into `contenteditable` editors, `<textarea>`/`<input>` controls or native `<select>` option labels; element names and labels are kept.
 - An empty or whitespace-only `JEV_MODEL` or `--model ""` now counts as unset, like the other decision settings, instead of sending an empty model name.
 - `run()` and `resume()` (CLI `run`/`resume`, MCP `browser_run`/`browser_resume`) reject an unparsable `scope` with `INVALID_SELECTOR` before observing, instead of `RUN_FAILED`.
+- A core keeps at most 32 paused continuations, dropping the least recently used, and drops a Page's continuations when that Page closes; a dropped ID fails with `CONTINUATION_NOT_FOUND`.
 
 ## 0.12.2
 
