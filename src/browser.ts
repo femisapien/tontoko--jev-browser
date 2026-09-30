@@ -1,13 +1,13 @@
 import { runGoal, type PendingCommitState, type RunSeed, type ResolvedInput } from './runner.js';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { chromium, firefox, webkit, type Page } from 'playwright-core';
+import { chromium, firefox, webkit, type Page, type ElementHandle } from 'playwright-core';
 import { z } from 'zod';
 import type { EntryType } from '@typesafe-ai/sdk';
 import { JevDecisionEngine, type DecisionEngine, type DecisionRequest } from './decision.js';
 import { assertPlaywrightCore } from './playwright-core-version.js';
 import { BrowserError, browserError, diagnostic, launchError, obscuredTarget } from './errors.js';
-import { capture, publicURL, verifyTarget, currentSemanticEvidence, readLocatorEvidence, semanticWithinScope, captureComboboxChoice, captureRegions, verifyOwnedOption, assertScope, validateScopeSyntax, type Captured } from './observation.js';
+import { capture, publicURL, verifyTarget, currentSemanticEvidence, readLocatorEvidence, semanticWithinScope, captureComboboxChoice, captureRegions, verifyOwnedOption, assertScope, validateScopeSyntax, type Captured, type Scope } from './observation.js';
 import { actionCandidates, actionDescription, inputBindings, modelElement, resolveSelectChoice } from './actions.js';
 import { flattenInputs } from './bindings.js';
 import { extractStructured } from './structured.js';
@@ -41,6 +41,16 @@ interface CarriedState { inputPaths: string[]; context: string }
 interface ContinuationState { resolutions?: ResolvedInput[]; carried?: CarriedState; page: Page; origin: string; instruction: string; options: RunOptions; checkpoints: GoalCheckpoint[]; checkpointedInputs: string[]; pendingUnknown?: PendingCommitState; verifiedActionKeys?: string[] }
 interface GoalExecution { resolutions?: ResolvedInput[]; carried?: CarriedState; result: RunResult; error?: BrowserError; pendingUnknown?: PendingCommitState; verifiedActionKeys?: string[] }
 const json = (value: unknown): EntryType => JSON.parse(JSON.stringify(value)) as EntryType;
+interface Limits { maxElements: number; maxTexts: number; maxCandidates: number }
+/** Effective observation settings for one call: core limits with per-call overrides, and excluded subtrees. */
+interface View extends Limits { exclude?: string[] }
+/** Per-call limits are clamped here; the core-wide options keep their existing meaning. */
+const OBSERVATION_HARD_LIMITS: Readonly<Limits> = Object.freeze({ maxElements: 1000, maxTexts: 2000, maxCandidates: 2000 });
+const elementRef = /^r[0-9a-f]+_e[0-9]+_[0-9]+$/;
+const refId = (value: string): string => value.startsWith('ref:') ? value.slice(4) : value;
+/** Snapshot and semantic_locate refs have a fixed shape that no valid element-type CSS selector can have. */
+const isRefScope = (scope: string | undefined): scope is string => typeof scope === 'string' && elementRef.test(refId(scope));
+const viewKeys = ['maxElements', 'maxTexts', 'maxCandidates', 'exclude'] as const;
 function positiveInteger(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value < 1) throw new BrowserError('CONFIG', `${name} must be a positive integer.`);
   return value;
@@ -154,8 +164,8 @@ export class JevBrowser {
     return parsed.href;
   }
   private async resolveNative(target: string, frameIndex?: number) {
-    const id = target.startsWith('ref:') ? target.slice(4) : target;
-    if (/^r[0-9a-f]+_e[0-9]+_[0-9]+$/.test(id)) {
+    const id = refId(target);
+    if (elementRef.test(id)) {
       const captured = this.snapshotCapture?.refs.has(id) ? this.snapshotCapture : this.pending?.captured;
       const ref = captured?.refs.get(id);
       if (!captured || !ref || this.page.url() !== captured.rawURL) throw new BrowserError('STALE_TARGET', 'Snapshot reference is expired or from another page. Take a new snapshot.');
@@ -191,6 +201,7 @@ export class JevBrowser {
   async screen(request: ScreenRequest, options: OperationOptions = {}): Promise<ScreenResult> {
     return this.exclusive(options, async operation => {
       if (options.scope !== undefined) throw new BrowserError('INVALID_ARGUMENT', 'Screen capture cannot use a DOM scope.');
+      if (viewKeys.some(key => options[key] !== undefined)) throw new BrowserError('INVALID_ARGUMENT', 'Screen capture cannot use DOM observation limits or exclusions.');
       const context = () => ({ signal: operation.signal, timeoutMs: this.remaining(operation) });
       try {
         return await this.screenCore().execute(request, context,
@@ -257,18 +268,49 @@ export class JevBrowser {
     const snapshot = this.snapshotCapture; this.snapshotCapture = undefined;
     await snapshot?.dispose();
   }
+  /** Validate per-call limits and exclusions before any browser work. */
+  private view(options: OperationOptions): View {
+    const limits = { ...this.limits };
+    for (const key of ['maxElements', 'maxTexts', 'maxCandidates'] as const) {
+      const value: unknown = options[key];
+      if (value === undefined) continue;
+      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) throw new BrowserError('INVALID_ARGUMENT', `${key} must be a positive integer.`);
+      limits[key] = Math.min(value, OBSERVATION_HARD_LIMITS[key]);
+    }
+    const exclude: unknown = options.exclude;
+    if (exclude !== undefined && (!Array.isArray(exclude) || exclude.length > 64 || exclude.some(selector => typeof selector !== 'string' || !selector.trim())))
+      throw new BrowserError('INVALID_ARGUMENT', 'exclude must be an array of at most 64 nonempty CSS selectors.');
+    return { ...limits, ...(exclude?.length ? { exclude: [...exclude as string[]] } : {}) };
+  }
+  private observation(view: View) { return { maxElements: view.maxElements, maxTexts: view.maxTexts, ...(view.exclude ? { exclude: view.exclude } : {}) }; }
+  /** Resolve a ref scope before earlier refs are invalidated; the returned root is released by the caller. */
+  private async scopeFor(scope: string | undefined, operation: Operation): Promise<{ scope?: Scope; release(): Promise<void> }> {
+    if (!isRefScope(scope)) return { ...(scope !== undefined ? { scope } : {}), release: async () => undefined };
+    const id = refId(scope);
+    const captured = this.snapshotCapture?.refs.has(id) ? this.snapshotCapture : this.pending?.captured;
+    const ref = captured?.refs.get(id);
+    if (!captured || !ref || this.page.url() !== captured.rawURL) throw new BrowserError('STALE_TARGET', 'The scope ref is expired or from another page. Take a new snapshot, or locate it again.');
+    await verifyTarget(ref, operation.signal);
+    const handle = await ref.handle.evaluateHandle(element => element) as ElementHandle<Element>;
+    return { scope: { frame: ref.frame, handle }, release: () => handle.dispose() };
+  }
+  private async scoped<T>(scope: string | undefined, operation: Operation, fn: (scope: Scope | undefined) => Promise<T>): Promise<T> {
+    const resolved = await this.scopeFor(scope, operation);
+    try { return await fn(resolved.scope); } finally { await resolved.release().catch(() => undefined); }
+  }
   async goto(url: string, options: OperationOptions = {}): Promise<{ url: string }> {
     const validated = this.validURL(url);
     const result = await this.native({ command: 'navigate', url: validated }, options);
     return { url: String(result.url) };
   }
   async snapshot(options: OperationOptions = {}): Promise<Snapshot> {
-    return this.exclusive(options, async operation => {
+    const view = this.view(options);
+    return this.exclusive(options, operation => this.scoped(options.scope, operation, async scope => {
       await this.invalidate(); operation.signal.throwIfAborted();
-      const observed = await capture(this.page, { ...this.limits, scope: options.scope, requireScope: true, signal: operation.signal, deadline: operation.deadline });
+      const observed = await capture(this.page, { ...this.observation(view), scope, requireScope: true, signal: operation.signal, deadline: operation.deadline });
       try { operation.signal.throwIfAborted(); this.snapshotCapture = observed; return observed.data; }
       catch (error) { await observed.dispose(); throw error; }
-    });
+    }));
   }
   async locateSemantic(description: string, options: SemanticLocateOptions = {}): Promise<SemanticTarget> {
     return (await this.locateSemanticBatch([description],options))[0]!;
@@ -277,24 +319,24 @@ export class JevBrowser {
     const threshold=semanticThreshold(options.minConfidence);
     if(!Array.isArray(descriptions)||!descriptions.length||descriptions.some(description=>typeof description!=='string'||!description.trim()))
       throw new BrowserError('INVALID_ARGUMENT','Nonempty semantic target descriptions are required.');
-    const tasks=[...descriptions];
-    return this.exclusive(options,async operation=>{
+    const tasks=[...descriptions],view=this.view(options);
+    return this.exclusive(options,operation=>this.scoped(options.scope,operation,async scope=>{
       await this.invalidate();operation.signal.throwIfAborted();
-      const observed=await capture(this.page,{...this.limits,scope:options.scope,requireScope:true,signal:operation.signal,deadline:operation.deadline});
+      const observed=await capture(this.page,{...this.observation(view),scope,requireScope:true,signal:operation.signal,deadline:operation.deadline});
       let retained=false;
       try{
         const {targets}=await locateSemanticTargets(observed.data,tasks,this.engine(),operation.signal,threshold);
         await Promise.all(targets.map(async target=>{
           const ref=observed.refs.get(target.ref)!;
           await verifyTarget(ref,operation.signal);
-          if(!await semanticWithinScope(ref,options.scope))throw new BrowserError('SEMANTIC_NO_MATCH','The discovered semantic target left the caller scope during inference.');
+          if(!await semanticWithinScope(ref,scope))throw new BrowserError('SEMANTIC_NO_MATCH','The discovered semantic target left the caller scope during inference.');
         }));
         operation.signal.throwIfAborted();
         this.snapshotCapture=observed;retained=true;return targets;
       }finally{if(!retained)await observed.dispose();}
-    });
+    }));
   }
-  private async semanticActual(actual: SemanticActual, operation:Operation, scope?:string): Promise<{ description?: string; evidence?: SemanticEvidence; sourceSemantic?: boolean; sourceConfidence?: number; sourceModel?: string; sourceModels?: string[]; readCurrent?:()=>Promise<SemanticEvidence|undefined> }> {
+  private async semanticActual(actual: SemanticActual, operation:Operation, scope?:Scope): Promise<{ description?: string; evidence?: SemanticEvidence; sourceSemantic?: boolean; sourceConfidence?: number; sourceModel?: string; sourceModels?: string[]; readCurrent?:()=>Promise<SemanticEvidence|undefined> }> {
     if ('locator' in actual) {
       const locator=actual.locator,property=actual.property??'text',attribute=actual.attribute;
       const sourceId='locator_'+randomUUID();
@@ -343,27 +385,28 @@ export class JevBrowser {
     for (const request of requests) if (typeof request.expected !== 'string' || !request.expected.trim())
       throw new BrowserError('INVALID_ARGUMENT','Semantic expected meaning must be a nonempty string.');
     if (!requests.length) return [];
-    return this.exclusive(options, async operation => {
-      await assertScope(this.page, options.scope);
+    const view = this.view(options);
+    return this.exclusive(options, operation => this.scoped(options.scope, operation, async scope => {
+      await assertScope(this.page, scope);
       const observationStarted = performance.now();
       const work = [], currentReaders:Array<(()=>Promise<SemanticEvidence|undefined>)|undefined>=[];
       for (const [index, request] of requests.entries()) {
-        const {readCurrent,...actual} = await this.semanticActual(request.actual,operation,options.scope);
+        const {readCurrent,...actual} = await this.semanticActual(request.actual,operation,scope);
         currentReaders[index]=readCurrent;
         work.push({ ...actual, expected: request.expected, threshold: thresholds[index]!, sourceThreshold: sourceThresholds[index]! });
       }
       const needsObservation = work.some(item => !item.evidence);
-      const observed = needsObservation ? await capture(this.page,{...this.limits,scope:options.scope,semanticRefs:live,signal:operation.signal,deadline:operation.deadline}) : undefined;
+      const observed = needsObservation ? await capture(this.page,{...this.observation(view),scope,semanticRefs:live,signal:operation.signal,deadline:operation.deadline}) : undefined;
       const observationMs = performance.now()-observationStarted;
       try {
         operation.signal.throwIfAborted();
-        const results = await compareSemanticWork(observed?.data,work,{decide:(request,options)=>this.engine().decide(request,options)},operation.signal,this.limits.maxCandidates);
+        const results = await compareSemanticWork(observed?.data,work,{decide:(request,options)=>this.engine().decide(request,options)},operation.signal,view.maxCandidates);
         for (const result of results) { result.usage.observationMs += observationMs; result.freshness = 'snapshot'; }
         if (live) {
           const started = performance.now();
           await Promise.all(results.map(async (result,index) => {
             const source = observed?.textRefs?.has(result.evidence.sourceId) || observed?.refs.has(result.evidence.sourceId) ? observed : this.snapshotCapture;
-            const current = currentReaders[index] ? await currentReaders[index]!() : source ? await currentSemanticEvidence(this.page,source,result.evidence,options.scope) : undefined;
+            const current = currentReaders[index] ? await currentReaders[index]!() : source ? await currentSemanticEvidence(this.page,source,result.evidence,scope) : undefined;
             result.freshness = current && isDeepStrictEqual(current,result.evidence) ? 'verified' : 'changed';
             if (result.freshness === 'changed') { result.status='inconclusive'; if (current) result.currentEvidence=current; }
           }));
@@ -373,7 +416,7 @@ export class JevBrowser {
         if(live) return this.assertSemanticResults(results,requests.map(request=>request.expected));
         return results;
       } finally { await observed?.dispose(); }
-    });
+    }));
   }
   private assertSemanticResults(results:SemanticComparisonResult[],expected:string[]):SemanticComparisonResult[] {
     const index = results.findIndex(result => result.status !== 'passed');
@@ -405,12 +448,14 @@ export class JevBrowser {
     });
   }
   async observe(instruction: string, options: ActOptions = {}): Promise<ActionPlan | null> {
+    this.view(options);
     return this.exclusive(options, async operation => {
       const result = await this.chooseAction(instruction, options, operation, [], false);
       return result === 'done' ? null : result;
     });
   }
   async act(instructionOrPlan: string | Pick<ActionPlan, 'id'>, options: ActOptions = {}): Promise<ActResult> {
+    this.view(options);
     return this.exclusive(options, async operation => {
       const plan = typeof instructionOrPlan === 'string'
         ? await this.chooseAction(instructionOrPlan, options, operation, [], false) : instructionOrPlan;
@@ -419,12 +464,13 @@ export class JevBrowser {
     });
   }
   async extract<S extends z.ZodType>(instruction: string, schema: S, options: ExtractOptions = {}): Promise<ExtractResult<z.output<S>>> {
-    return this.exclusive(options, async operation => {
+    const view = this.view(options);
+    return this.exclusive(options, operation => this.scoped(options.scope, operation, async scope => {
       await this.invalidate(); operation.signal.throwIfAborted();
-      const observed = await capture(this.page, { ...this.limits, scope: options.scope, requireScope: true, recordsScope: options.recordsScope, signal: operation.signal, deadline: operation.deadline });
-      try { return await extractStructured(observed.data, instruction, schema, () => this.engine(), operation.signal, this.limits.maxCandidates); }
+      const observed = await capture(this.page, { ...this.observation(view), scope, requireScope: true, recordsScope: options.recordsScope, signal: operation.signal, deadline: operation.deadline });
+      try { return await extractStructured(observed.data, instruction, schema, () => this.engine(), operation.signal, view.maxCandidates); }
       finally { await observed.dispose(); }
-    });
+    }));
   }
   /** Stagehand-style ergonomic entry point; it uses the same bounded run loop. */
   agent(defaults: RunOptions = {}) {
@@ -435,6 +481,8 @@ export class JevBrowser {
     } };
   }
   private validateRunOptions(options: RunOptions): void {
+    if(isRefScope(options.scope))throw new BrowserError('INVALID_ARGUMENT','run scope must be a CSS selector; a ref expires when the goal changes the page.');
+    this.view(options);
     if(options.semanticInputs!==undefined){
       const policy=options.semanticInputs;
       if(!policy||typeof policy!=='object'||Array.isArray(policy)||![Object.prototype,null].includes(Object.getPrototypeOf(policy))||Object.entries(policy).some(([path,threshold])=>!path.startsWith('/')||/~(?:[^01]|$)/.test(path)||typeof threshold!=='number'||!Number.isFinite(threshold)||threshold<0||threshold>1))
@@ -448,9 +496,10 @@ export class JevBrowser {
   }
   private storedRunOptions(options: RunOptions): RunOptions {
     const {signal: _signal,...stored}=options;
-    return {...stored,...(options.semanticInputs?{semanticInputs:structuredClone(options.semanticInputs)}:{}),...(options.values?{values:structuredClone(options.values)}:{}),...(options.expect?{expect:structuredClone(options.expect)}:{})};
+    return {...stored,...(options.semanticInputs?{semanticInputs:structuredClone(options.semanticInputs)}:{}),...(options.values?{values:structuredClone(options.values)}:{}),...(options.expect?{expect:structuredClone(options.expect)}:{}),...(options.exclude?{exclude:[...options.exclude]}:{})};
   }
   private async executeGoal(operation: Operation, instruction: string, options: RunOptions, seed: RunSeed = {}): Promise<GoalExecution> {
+    const view=this.view(options),observation=this.observation(view);
     await this.invalidate();
     let pendingUnknown:PendingCommitState|undefined=seed.pendingUnknown;
     const verifiedActionKeys=new Set(seed.verifiedActionKeys??[]);
@@ -458,10 +507,10 @@ export class JevBrowser {
     let resolutions=structuredClone(seed.resolutions??[]);
     let result:RunResult, failure:BrowserError|undefined;
     try {result=await runGoal({
-      page: () => this.page, capture: () => capture(this.page,{...this.limits,scope:options.scope,signal:operation.signal,deadline:operation.deadline}),
+      page: () => this.page, capture: () => capture(this.page,{...observation,scope:options.scope,signal:operation.signal,deadline:operation.deadline}),
       regions: () => captureRegions(this.page),
-      captureRegion: ref => capture(this.page,{...this.limits,selection:{frame:ref.frame,roots:[ref.handle]},signal:operation.signal}),
-      captureChoice: (ref,value) => captureComboboxChoice(this.page,ref,value,this.limits,{signal:operation.signal,timeoutMs:Math.min(this.remaining(operation),options.settleTimeoutMs??2000)}),
+      captureRegion: ref => capture(this.page,{...observation,selection:{frame:ref.frame,roots:[ref.handle]},signal:operation.signal}),
+      captureChoice: (ref,value) => captureComboboxChoice(this.page,ref,value,view,{signal:operation.signal,timeoutMs:Math.min(this.remaining(operation),options.settleTimeoutMs??2000)}),
       engine: () => this.engine(), operation: () => ({signal:operation.signal,timeoutMs:this.remaining(operation)}),
       perform: (plan,observed,values,started) => this.executeCaptured(plan,observed,values,operation,started),
       assert: async condition => {
@@ -474,7 +523,7 @@ export class JevBrowser {
       rememberCarriedInputs: paths => { carriedInputs=paths; },
       rememberResolutions: resolved => { resolutions=resolved; },
       rememberCheckpointAction: key => { verifiedActionKeys.add(key);pendingUnknown=undefined; },
-      candidateLimit:this.limits.maxCandidates,
+      candidateLimit:view.maxCandidates,
     },instruction,options,seed);
     }catch(error){
       if(!(error instanceof BrowserError)||!error.partial)throw error;
@@ -484,7 +533,7 @@ export class JevBrowser {
     // remains unchanged. They are never promoted to saved checkpoint evidence.
     let carried:CarriedState|undefined;
     if(carriedInputs.length&&!pendingUnknown&&result.status!=='complete'&&!unknownNonCommit(result)){
-      const observed=await capture(this.page,{...this.limits,scope:options.scope});
+      const observed=await capture(this.page,{...observation,scope:options.scope});
       try{carried={inputPaths:carriedInputs,context:JSON.stringify([observed.rawURL,observed.changeKeys])};}
       finally{await observed.dispose();}
     }
@@ -528,6 +577,7 @@ export class JevBrowser {
   }
   async resume(continuationId: string, options: ResumeOptions = {}): Promise<RunResult> {
     if(!continuationId.trim())throw new BrowserError('INVALID_ARGUMENT','A continuation ID is required.');
+    if(isRefScope(options.scope))throw new BrowserError('INVALID_ARGUMENT','resume scope must be a CSS selector; a ref expires when the goal changes the page.');
     const state=this.continuations.get(continuationId);
     if(state?.page.isClosed())this.dropContinuation(continuationId);
     if(!state||state.page.isClosed())throw new BrowserError('CONTINUATION_NOT_FOUND','This continuation is expired, completed, or belongs to another browser session.');
@@ -535,12 +585,14 @@ export class JevBrowser {
       throw new BrowserError('CONTINUATION_CONTEXT_CHANGED','Resume must use the original Page and origin.');
     if(options.scope!==undefined&&options.scope!==state.options.scope)
       throw new BrowserError('CONTINUATION_CONFLICT','Resume cannot change the original observation scope.');
+    if(viewKeys.some(key=>options[key]!==undefined&&!isDeepStrictEqual(options[key],state.options[key])))
+      throw new BrowserError('CONTINUATION_CONFLICT','Resume cannot change the original observation limits or exclusions.');
     const values=mergeRunValues(state.options.values??{},options.values??{});
     const runOptions:RunOptions={...state.options,values,...(options.scope!==undefined?{scope:options.scope}:{}),...(options.timeoutMs!==undefined?{timeoutMs:options.timeoutMs}:{}),...(options.signal?{signal:options.signal}:{})};
     return this.exclusive({...options,timeoutMs:options.timeoutMs??state.options.timeoutMs??this.options.timeoutMs??60_000},async operation=>{
       await validateScopeSyntax(this.page,runOptions.scope);
       if(state.carried){
-        const observed=await capture(this.page,{...this.limits,scope:state.options.scope,signal:operation.signal,deadline:operation.deadline});
+        const observed=await capture(this.page,{...this.observation(this.view(state.options)),scope:state.options.scope,signal:operation.signal,deadline:operation.deadline});
         try{if(state.carried.context!==JSON.stringify([observed.rawURL,observed.changeKeys]))
           throw new BrowserError('CONTINUATION_CONTEXT_CHANGED','The paused wizard view changed; carried input cannot be reused.');}
         finally{await observed.dispose();}
@@ -550,14 +602,17 @@ export class JevBrowser {
   }
   private async chooseAction(instruction: string, options: ActOptions, operation: Operation, history: unknown[], allowDone: boolean): Promise<ActionPlan | null | 'done'> {
     if (!instruction.trim()) throw new BrowserError('INVALID_ARGUMENT', 'A nonempty instruction is required.');
-    await this.invalidate(); operation.signal.throwIfAborted();
+    const view = this.view(options);
     const { values, inputs } = inputBindings(instruction, options.values);
     if (Object.values(values).some(value => typeof value !== 'string')) throw new BrowserError('INVALID_ARGUMENT', 'Named input values must be strings.');
-    const observed = await capture(this.page, { ...this.limits, scope: options.scope, requireScope: true, signal: operation.signal, deadline: operation.deadline });
+    const observed = await this.scoped(options.scope, operation, async scope => {
+      await this.invalidate(); operation.signal.throwIfAborted();
+      return capture(this.page, { ...this.observation(view), scope, requireScope: true, signal: operation.signal, deadline: operation.deadline });
+    });
     let retained = false;
     try {
       if (observed.data.truncatedElements) throw new BrowserError('OBSERVATION_LIMIT', 'Action observation was truncated. Narrow scope or raise maxElements.');
-      const actions = actionCandidates(observed.data, values, this.limits.maxCandidates);
+      const actions = actionCandidates(observed.data, values, view.maxCandidates);
       if (!actions.size && !allowDone) return null;
       const criteria: Record<string, EntryType> = {};
       for (const [id, action] of actions) criteria[id] = json(actionDescription(action));
@@ -581,7 +636,7 @@ export class JevBrowser {
       if (allowDone && answer.choice === '__done__') return 'done';
       let action = actions.get(answer.choice);
       if (!action) throw new BrowserError('INVALID_DECISION', 'Jev selected an action that was not offered.');
-      action = await resolveSelectChoice(action,instruction,request=>this.engine().decide(request,{signal:operation.signal}),this.limits.maxCandidates) ?? undefined;
+      action = await resolveSelectChoice(action,instruction,request=>this.engine().decide(request,{signal:operation.signal}),view.maxCandidates) ?? undefined;
       operation.signal.throwIfAborted();
       if(!action)return null;
       const { answers, ...metadata } = result;

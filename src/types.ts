@@ -78,7 +78,18 @@ export interface ActionPlan {
 /** `pageId` names the tab that opened the dialog, matching `tabs` results; Jev always sets it. */
 export interface BrowserDialog { id: number; type: string; message: string; defaultValue: string; pageId?: number }
 export interface ActResult { status: 'executed' | 'dialog'; plan: ActionPlan; url: string; dialog?: BrowserDialog }
-export interface OperationOptions { signal?: AbortSignal; scope?: string; timeoutMs?: number }
+export interface OperationOptions {
+  signal?: AbortSignal;
+  /** CSS selector, or a current snapshot/semantic_locate ref (`r…_e…_…`, optionally `ref:`-prefixed), bounding observation. run/resume accept CSS only. */
+  scope?: string;
+  timeoutMs?: number;
+  /** Per-call observation limits; they override the core limits for this call and are clamped to 1000 elements, 2000 texts and 2000 candidates. */
+  maxElements?: number;
+  maxTexts?: number;
+  maxCandidates?: number;
+  /** CSS selectors whose matching subtrees, including open shadow content, are left out of this call's observation. */
+  exclude?: string[];
+}
 export interface SemanticLocateOptions extends OperationOptions { minConfidence?: number }
 export interface SemanticEvidence { sourceId: string; frame: number; role: string; text: string; context: string; attribute?: string; value?: string | number | boolean }
 export interface SemanticTarget { model?: string; models?: string[]; ref: string; snapshotId: string; confidence: number; evidence: SemanticEvidence }
