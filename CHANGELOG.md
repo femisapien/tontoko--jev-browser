@@ -4,6 +4,8 @@
 
 - Opt-in image understanding: `screenDecide` (CLI `screen_decide`, MCP `browser_screen_decide`, also in screen-only sessions) captures the viewport once, has an OpenAI-compatible Chat Completions endpoint you configure (`vision` option, or `--vision-base-url` and `--vision-model` with `JEV_VISION_API_KEY`) describe it, and answers your questions with Jev from that text; `decideFromScreen` and `ChatCompletionsImageUnderstanding` are exported for your own captures. Screenshots go only to that HTTPS or loopback endpoint, only when called, and no Jev key is sent to it.
 - A native dialog that opens during a `screen` capture is now always reported once as `SCREEN_FAILED` (or `SCREEN_INTERRUPTED` after an input) with reason `dialog`; in screen-only sessions it could instead surface as `SCREEN_DIALOG_UNSUPPORTED` after a retaken capture, depending on which timeout fired first.
+- `act`, `observe` and `run` no longer send link URLs in their decision state (observe on a 40-row table with a link per row: ~99.5 KB to ~86.2 KB); `extract` and semantic evidence keep them, and link `href` sources now have their own budget instead of counting toward `maxTexts`.
+- An `act`/`observe` decision request larger than 128 KiB now fails with `OBSERVATION_LIMIT` before any provider call instead of a provider `PROVIDER_ERROR`; decision requests omit `frame` for the main frame.
 
 ## 0.13.0
 

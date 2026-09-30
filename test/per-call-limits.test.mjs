@@ -45,7 +45,8 @@ test('per-call limits are clamped to the hard caps and invalid values are reject
 });
 
 test('observe honors a per-call maxElements instead of failing with OBSERVATION_LIMIT',async t=>{
-  const page=await browser.newPage();await page.setContent(`<main>${buttons(130)}</main>`);
+  // One list item per button keeps each row context short, so the request stays within the 128 KiB decision budget.
+  const page=await browser.newPage();await page.setContent(`<ul>${Array.from({length:130},(_,i)=>`<li><button>Item ${i}</button></li>`).join('')}</ul>`);
   const decider=engine(()=>candidate=>candidate?.kind==='click'&&candidate?.target?.name==='Item 125');
   const core=new JevBrowser({page,engine:decider});t.after(async()=>{await core.close();await page.close();});
   await assert.rejects(core.observe('Click Item 125'),{code:'OBSERVATION_LIMIT'});

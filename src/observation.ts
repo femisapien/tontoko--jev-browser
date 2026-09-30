@@ -66,7 +66,8 @@ async function captureOnce(page: Page, options: CaptureOptions): Promise<Capture
   try {
     // Read a frame completely before recording it, so a frame removed mid-read leaves no partial evidence.
     const observeFrame = async (frameIndex: number, frame: Frame) => {
-      const frameOptions = { maxElements: Math.max(0, options.maxElements - data.elements.length), maxTexts: Math.max(0, options.maxTexts - data.texts.length) };
+      const hrefCount = data.texts.filter(text => text.attribute === 'href').length;
+      const frameOptions = { maxElements: Math.max(0, options.maxElements - data.elements.length), maxTexts: Math.max(0, options.maxTexts - (data.texts.length - hrefCount)), maxHrefs: Math.max(0, options.maxTexts - hrefCount) };
       // Use Playwright's native CSS resolver, including open shadow roots.
       const roots = options.selection?.roots ?? (options.scope ? await scopeHandles(frame, options.scope) : undefined);
       if (roots && !options.selection) owned.push(...roots);
