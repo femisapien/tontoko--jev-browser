@@ -127,3 +127,11 @@ test('a dialog payload names the tab that opened it',async t=>{
  assert.equal(result.status,'dialog');assert.equal(result.dialog.pageId,tab.pageId);
  await core.native({command:'handle_dialog',accept:false});
 });
+
+test('downloads carry the navigation generation of the document that started them',async t=>{
+ const {core,page}=await fixture(t);await core.goto(server.url+'/a');await downloaded(page,'first');await downloaded(page,'second');
+ await core.goto(server.url+'/b');await downloaded(page,'third');
+ const [first,second,third]=(await core.native({command:'downloads',action:'list'})).downloads;
+ assert.equal(typeof first.navigation,'number');assert.equal(first.navigation,second.navigation);assert.ok(third.navigation>first.navigation);
+ const all=(await core.native({command:'downloads',action:'list',allTabs:true})).downloads;assert.equal(all[2].navigation,third.navigation);
+});

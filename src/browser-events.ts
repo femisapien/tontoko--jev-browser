@@ -12,7 +12,7 @@ export interface NativeHost {
   validateURL(url: string): Promise<string>;
 }
 type ActionOutcome = { status: 'executed' } | { status: 'dialog'; dialog: BrowserDialog };
-interface TrackedPage { id: number; chooser?: FileChooser; holdDialogs(hold: boolean): void; detach(): void }
+interface TrackedPage { id: number; navigation: number; chooser?: FileChooser; holdDialogs(hold: boolean): void; detach(): void }
 const push = <T>(entries: T[], entry: T, limit: number) => { entries.push(entry); if (entries.length > limit) entries.shift(); };
 /** Mechanical browser operations. The shared core supplies locking, authorization and reference identity. */
 export class BrowserEvents {
@@ -23,7 +23,7 @@ export class BrowserEvents {
   private downloadCount = 0;
   protected readonly messages: { type: string; text: string; url: string; pageId: number }[] = [];
   protected readonly requests: { method: string; url: string; resourceType: string; pageId: number }[] = [];
-  protected readonly downloads: { id: number; pageId: number; download: Download }[] = [];
+  protected readonly downloads: { id: number; pageId: number; navigation: number; download: Download }[] = [];
   protected readonly routes = new Map<string, (route: Route) => Promise<void>>();
   protected dialog?: Dialog;
   private dialogId = 0;
@@ -46,6 +46,7 @@ export class BrowserEvents {
     let holding = false;
     const tracked: TrackedPage = {
       id: ++this.pageCount,
+      navigation: 0,
       // A dialog listener disables Playwright's default dismissal, so it exists only while Jev owns dialogs.
       holdDialogs: hold => { if (hold === holding) return; holding = hold; if (hold) page.on('dialog', onDialog); else page.off('dialog', onDialog); },
       detach: () => { tracked.holdDialogs(false); page.off('console', onConsole); page.off('pageerror', onError); page.off('request', onRequest); page.off('download', onDownload); page.off('filechooser', onChooser); page.off('framenavigated', onNavigation); page.off('close', onClose); },
@@ -53,11 +54,11 @@ export class BrowserEvents {
     const onConsole = (m: ConsoleMessage) => push(this.messages, { type: m.type(), text: m.text(), url: publicURL(page.url()), pageId: tracked.id }, 500);
     const onError = (e: Error) => push(this.messages, { type: 'error', text: e.message, url: publicURL(page.url()), pageId: tracked.id }, 500);
     const onRequest = (r: Request) => push(this.requests, { method: r.method(), url: publicURL(r.url()), resourceType: r.resourceType(), pageId: tracked.id }, 1000);
-    const onDownload = (d: Download) => push(this.downloads, { id: ++this.downloadCount, pageId: tracked.id, download: d }, 100);
+    const onDownload = (d: Download) => push(this.downloads, { id: ++this.downloadCount, pageId: tracked.id, navigation: tracked.navigation, download: d }, 100);
     const onDialog = (d: Dialog) => { this.dialog = d; this.dialogId++; this.dialogPage = page; this.dialogPageId = tracked.id; this.dialogNotice?.(); };
     const onChooser = (c: FileChooser) => { tracked.chooser = c; };
-    // A chooser belongs to the document that opened it.
-    const onNavigation = (frame: Frame) => { if (frame === page.mainFrame()) tracked.chooser = undefined; };
+    // A chooser belongs to the document that opened it; downloads record which main-frame navigation they came from.
+    const onNavigation = (frame: Frame) => { if (frame === page.mainFrame()) { tracked.navigation++; tracked.chooser = undefined; } };
     const onClose = () => { tracked.detach(); this.tracked.delete(page); };
     page.on('console', onConsole); page.on('pageerror', onError); page.on('request', onRequest); page.on('download', onDownload); page.on('filechooser', onChooser); page.on('framenavigated', onNavigation); page.on('close', onClose);
     tracked.holdDialogs(this.holdsDialogs());

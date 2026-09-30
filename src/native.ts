@@ -93,7 +93,7 @@ export class NativeBrowser extends BrowserEvents {
         return { status: 'executed', count: paths.length };
       }
       case 'downloads': {
-        const selected = this.scoped(this.downloads), describe = ({ id, pageId, download: d }: typeof selected[number]) => ({ id, pageId, filename: d.suggestedFilename(), url: publicURL(d.url()) });
+        const selected = this.scoped(this.downloads), describe = ({ id, pageId, navigation, download: d }: typeof selected[number]) => ({ id, pageId, navigation, filename: d.suggestedFilename(), url: publicURL(d.url()) });
         if (c.action === 'list') return { downloads: c.allTabs ? this.downloads.map(describe) : selected.map((d, index) => ({ index, ...describe(d) })) };
         // Ids stay stable while the bounded list drops old entries; an index addresses the selected tab's current list.
         const d = (c.id !== undefined ? this.downloads.find(entry => entry.id === c.id) : selected[c.index!])?.download; if (!d) throw new BrowserError('INVALID_ARGUMENT', 'Download id or index is not present.');
