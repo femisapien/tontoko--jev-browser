@@ -1,4 +1,4 @@
-import type { Snapshot, GroundedAction, ElementInfo } from './types.js';
+import type { Snapshot, GroundedAction, ElementInfo, BrowserDialog } from './types.js';
 import { BrowserError } from './errors.js';
 import type { DecisionRequest, DecisionResult } from './decision.js';
 
@@ -33,6 +33,8 @@ export function actionCandidates(snapshot: Snapshot, values: Record<string, stri
   return result;
 }
 /** Do not duplicate large option lists, DOM state, or literal input values in every choice. */
+/** A dialog as the model sees it; the local tab id is not decision context. */
+export const modelDialog = ({ pageId: _pageId, ...dialog }: BrowserDialog) => dialog;
 export function actionDescription(action: GroundedAction) {
   const target = action.target;
   return {
@@ -43,7 +45,7 @@ export function actionDescription(action: GroundedAction) {
     ...(action.deferred ? { optionChoice:'This long list is resolved separately, after choosing its control. Named inputs are applied automatically; do not select this merely to repeat an already bound input.' } : {}),
     ...(action.key ? { key: action.key } : {}),
     ...(action.direction ? { direction: action.direction } : {}),
-    ...(action.dialog ? { dialog: action.dialog, accept: action.accept } : {}),
+    ...(action.dialog ? { dialog: modelDialog(action.dialog), accept: action.accept } : {}),
   };
 }
 

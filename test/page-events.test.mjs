@@ -63,7 +63,8 @@ test('console and network entries are scoped to the selected tab unless allTabs 
  assert.deepEqual(logged((await core.native({command:'console_messages',allTabs:true})).messages,'from tab').map(m=>m.text),['from tab A']);
 });
 test('file_upload without a target uses only a chooser from the selected tab and document',async t=>{
- const {core,page}=await fixture(t);const path=join(root,'chooser.txt');await writeFile(path,'chosen');
+ // captureDialogs holds choosers the caller opens between Jev operations.
+ const {core,page}=await fixture(t,undefined,{captureDialogs:true});const path=join(root,'chooser.txt');await writeFile(path,'chosen');
  await core.goto(server.url+'/a');await opened(page,'#f');
  await core.native({command:'tabs',action:'new',url:server.url+'/b'});
  await assert.rejects(core.native({command:'file_upload',paths:[path]}),{code:'NO_FILE_CHOOSER'});

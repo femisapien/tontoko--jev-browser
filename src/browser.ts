@@ -7,7 +7,7 @@ import type { EntryType } from '@typesafe-ai/sdk';
 import { JevDecisionEngine, type DecisionEngine, type DecisionRequest } from './decision.js';
 import { assertPlaywrightCore } from './playwright-core-version.js';
 import { BrowserError, browserError, diagnostic, launchError, obscuredTarget } from './errors.js';
-import { capture, publicURL, verifyTarget, currentSemanticEvidence, readLocatorEvidence, semanticWithinScope, captureComboboxChoice, captureRegions, verifyOwnedOption, assertScope, type Captured } from './observation.js';
+import { capture, publicURL, verifyTarget, currentSemanticEvidence, readLocatorEvidence, semanticWithinScope, captureComboboxChoice, captureRegions, verifyOwnedOption, assertScope, validateScopeSyntax, type Captured } from './observation.js';
 import { actionCandidates, actionDescription, inputBindings, modelElement, resolveSelectChoice } from './actions.js';
 import { flattenInputs } from './bindings.js';
 import { extractStructured } from './structured.js';
@@ -21,6 +21,8 @@ interface Operation { signal: AbortSignal; budget: AbortSignal; deadline: number
 const pageLeases = new WeakMap<Page, JevBrowser>();
 // Page evaluation has no Playwright timeout. After cancellation, work that ignores the signal gets this long to unwind.
 const SETTLE_GRACE_MS = 1_000;
+// Paused goals kept per core; the least recently used is dropped first.
+const MAX_CONTINUATIONS = 32;
 async function within(work: Promise<unknown>, ms: number): Promise<void> {
   let timer: NodeJS.Timeout | undefined;
   try { await Promise.race([work, new Promise(resolve => { timer = setTimeout(resolve, ms); })]); }
@@ -60,6 +62,7 @@ function mergeRunValues(base: Record<string, RunValue> = {}, extra: Record<strin
     throw new BrowserError('CONTINUATION_CONFLICT','Resume may add inputs, but cannot replace an existing value or its object structure.');
   return merged;
 }
+const tabClosed = (cause?: unknown) => new BrowserError('TAB_CLOSED', 'The selected tab was closed. List tabs and choose another with `tabs` action `select` (MCP `browser_tabs`), or open one with action `new`; Jev does not switch tabs by itself.', cause === undefined ? {} : { cause });
 const pageOrigin = (page: Page): string => new URL(page.url()).origin;
 // An input or advance with an unknown outcome is never hidden by making its stop resumable.
 const unknownNonCommit = (result: RunResult): boolean => !!result.effects?.some(effect=>effect.kind!=='commit'&&effect.status==='unknown');
@@ -84,6 +87,7 @@ export class JevBrowser {
   private ownedCleanup?: () => Promise<void>;
   private pending?: Pending;
   private readonly continuations = new Map<string,ContinuationState>();
+  private readonly continuationPages = new Map<Page,()=>void>();
   private active?: Promise<unknown>;
   private closed = false;
   private closePromise?: Promise<void>;
@@ -199,6 +203,9 @@ export class JevBrowser {
   private async exclusive<T>(options: OperationOptions, fn: (operation: Operation) => Promise<T>, command?: string): Promise<T> {
     if (this.closed) throw new BrowserError('CLOSED', 'This browser session is closed.');
     if (this.active || pageLeases.has(this.page)) throw new BrowserError('BUSY', 'This Page already has an active operation. Await it, or use a separate Page.', { retryable: true });
+    // A closed selected tab is reported, never silently replaced: the caller chooses the next tab.
+    // Screen tools have no tab selection and report the closed Page as their own failure reason.
+    if (this.page.isClosed() && command !== 'tabs' && command !== 'screen') throw tabClosed();
     this.nativeBrowser.guard(command);
     const timeoutMs = positiveInteger(options.timeoutMs ?? this.timeoutMs, 'timeoutMs'), budget = AbortSignal.timeout(timeoutMs);
     const signal = AbortSignal.any([this.lifetime.signal, budget, ...(options.signal ? [options.signal] : [])]);
@@ -220,7 +227,8 @@ export class JevBrowser {
     const timedOut = signal.aborted ? !closed && (signal.reason as Error | undefined)?.name === 'TimeoutError' : error instanceof Error && error.name === 'TimeoutError';
     // A specific cause (including a covering element that outlasted the budget) wins over a generic timeout or cancellation.
     let specific: BrowserError | undefined;
-    if (error instanceof BrowserError) specific = error.code === 'CANCELLED' && timedOut ? undefined : error;
+    if (!closed && !(error instanceof BrowserError) && this.page.isClosed()) specific = tabClosed(error);
+    else if (error instanceof BrowserError) specific = error.code === 'CANCELLED' && timedOut ? undefined : error;
     else if (timedOut) specific = obscuredTarget(error);
     else if (!signal.aborted) { const mapped = browserError(error); specific = mapped.code === 'CANCELLED' ? undefined : mapped; }
     if (specific) { if (effect) specific.retryable = false; return specific; }
@@ -476,26 +484,44 @@ export class JevBrowser {
   private attachContinuation(execution: GoalExecution, instruction: string, options: RunOptions, existingId?: string): RunResult {
     const {result,error,pendingUnknown,verifiedActionKeys,carried,resolutions}=execution;
     const finish=(value:RunResult):RunResult=>{if(error){error.partial=value;throw error;}return value;};
-    if(result.status==='complete'){if(existingId)this.continuations.delete(existingId);return finish(result);}
+    if(result.status==='complete'){if(existingId)this.dropContinuation(existingId);return finish(result);}
     const checkpoints=result.checkpoints??[];
     // Carried wizard input needs no checkpoint: resume first re-checks its paused view.
     const resumableMissing=(checkpoints.length>0||!!carried)&&!unknownNonCommit(result);
     const resumableUnknown=!!pendingUnknown;
-    if(!resumableMissing&&!resumableUnknown){if(existingId)this.continuations.delete(existingId);return finish(result);}
+    if(!resumableMissing&&!resumableUnknown){if(existingId)this.dropContinuation(existingId);return finish(result);}
     const id=existingId??randomUUID();
-    this.continuations.set(id,{...(resolutions?{resolutions:structuredClone(resolutions)}:{}),...(carried?{carried:structuredClone(carried)}:{}),page:this.page,origin:pageOrigin(this.page),instruction,options:this.storedRunOptions(options),checkpoints:structuredClone(checkpoints),checkpointedInputs:[...new Set(checkpoints.flatMap(checkpoint=>checkpoint.inputPaths))],...(pendingUnknown?{pendingUnknown:structuredClone(pendingUnknown)}:{}),...(verifiedActionKeys?{verifiedActionKeys:[...verifiedActionKeys]}:{})});
+    this.storeContinuation(id,{...(resolutions?{resolutions:structuredClone(resolutions)}:{}),...(carried?{carried:structuredClone(carried)}:{}),page:this.page,origin:pageOrigin(this.page),instruction,options:this.storedRunOptions(options),checkpoints:structuredClone(checkpoints),checkpointedInputs:[...new Set(checkpoints.flatMap(checkpoint=>checkpoint.inputPaths))],...(pendingUnknown?{pendingUnknown:structuredClone(pendingUnknown)}:{}),...(verifiedActionKeys?{verifiedActionKeys:[...verifiedActionKeys]}:{})});
     return finish({...result,continuation:{id,reason:result.reason,...(pendingUnknown?{pendingEffect:'commit' as const}:{})}});
+  }
+  /** Keep at most MAX_CONTINUATIONS, most recently used last; a continuation lives only while its Page is open. */
+  private storeContinuation(id: string, state: ContinuationState): void {
+    this.continuations.delete(id); this.continuations.set(id,state);
+    for(const oldest of this.continuations.keys()){if(this.continuations.size<=MAX_CONTINUATIONS)break;this.continuations.delete(oldest);}
+    if(!this.continuationPages.has(state.page)&&!state.page.isClosed()){
+      const page=state.page,onClose=()=>{for(const [key,entry] of this.continuations)if(entry.page===page)this.continuations.delete(key);this.releaseContinuationPages();};
+      page.once('close',onClose);this.continuationPages.set(page,onClose);
+    }
+    this.releaseContinuationPages();
+  }
+  private dropContinuation(id: string): void { this.continuations.delete(id); this.releaseContinuationPages(); }
+  private releaseContinuationPages(all = false): void {
+    const live=new Set(all?[]:[...this.continuations.values()].map(entry=>entry.page));
+    for(const [page,onClose] of this.continuationPages)if(!live.has(page)){page.off('close',onClose);this.continuationPages.delete(page);}
   }
   async run(instruction: string, options: RunOptions = {}): Promise<RunResult> {
     this.validateRunOptions(options);
     options={...this.storedRunOptions(options),...(options.signal?{signal:options.signal}:{})};
-    return this.exclusive({ ...options, timeoutMs: options.timeoutMs ?? this.options.timeoutMs ?? 60_000 }, async operation =>
-      this.attachContinuation(await this.executeGoal(operation,instruction,options),instruction,options));
+    return this.exclusive({ ...options, timeoutMs: options.timeoutMs ?? this.options.timeoutMs ?? 60_000 }, async operation => {
+      await validateScopeSyntax(this.page,options.scope);
+      return this.attachContinuation(await this.executeGoal(operation,instruction,options),instruction,options);
+    });
   }
   async resume(continuationId: string, options: ResumeOptions = {}): Promise<RunResult> {
     if(!continuationId.trim())throw new BrowserError('INVALID_ARGUMENT','A continuation ID is required.');
     const state=this.continuations.get(continuationId);
-    if(!state)throw new BrowserError('CONTINUATION_NOT_FOUND','This continuation is expired, completed, or belongs to another browser session.');
+    if(state?.page.isClosed())this.dropContinuation(continuationId);
+    if(!state||state.page.isClosed())throw new BrowserError('CONTINUATION_NOT_FOUND','This continuation is expired, completed, or belongs to another browser session.');
     if(this.page!==state.page||pageOrigin(this.page)!==state.origin)
       throw new BrowserError('CONTINUATION_CONTEXT_CHANGED','Resume must use the original Page and origin.');
     if(options.scope!==undefined&&options.scope!==state.options.scope)
@@ -503,6 +529,7 @@ export class JevBrowser {
     const values=mergeRunValues(state.options.values??{},options.values??{});
     const runOptions:RunOptions={...state.options,values,...(options.scope!==undefined?{scope:options.scope}:{}),...(options.timeoutMs!==undefined?{timeoutMs:options.timeoutMs}:{}),...(options.signal?{signal:options.signal}:{})};
     return this.exclusive({...options,timeoutMs:options.timeoutMs??state.options.timeoutMs??this.options.timeoutMs??60_000},async operation=>{
+      await validateScopeSyntax(this.page,runOptions.scope);
       if(state.carried){
         const observed=await capture(this.page,{...this.limits,scope:state.options.scope,signal:operation.signal,deadline:operation.deadline});
         try{if(state.carried.context!==JSON.stringify([observed.rawURL,observed.changeKeys]))
@@ -628,7 +655,7 @@ export class JevBrowser {
         await this.active?.catch(() => undefined);
         await this.invalidate();
       })(), SETTLE_GRACE_MS);
-      this.continuations.clear();
+      this.continuations.clear(); this.releaseContinuationPages(true);
       this.screenController?.close();
       await this.ownedCleanup?.();
     })();

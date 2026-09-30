@@ -60,7 +60,7 @@ A checkpoint's verified action signature remains blocked throughout the task and
 
 `checkpoints` is ordered. Each item contains an ID, the attempted effect ID, its verification, newly covered input paths, and a result record ID when one exists. Record IDs refer to observations, not application/database primary keys. `verification` at the top level describes final acceptance; checkpoint verification describes its own stage. Read `readback` and `unobserved` to distinguish observed result values from values only checked in controls.
 
-Continuations require the same running `JevBrowser` instance, Page and origin. An explicit observation scope cannot be changed on resume. Closing the core or completing the continuation invalidates its ID. Another SDK wrapper, a restarted CLI worker, a new MCP process, or a different origin cannot consume it. IDs whose response was lost are not recovered through a durable store; callers must retain the returned ID.
+Continuations require the same running `JevBrowser` instance, Page and origin. An explicit observation scope cannot be changed on resume. Closing the core, closing its Page, or completing the continuation invalidates its ID. A core keeps at most 32 paused continuations; storing another drops the least recently used one (a `resume` counts as use). An invalidated or dropped ID fails with `CONTINUATION_NOT_FOUND`. Another SDK wrapper, a restarted CLI worker, a new MCP process, or a different origin cannot consume it. IDs whose response was lost are not recovered through a durable store; callers must retain the returned ID.
 
 ## CLI and MCP
 

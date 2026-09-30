@@ -75,7 +75,8 @@ export interface ActionPlan {
   confidence: number;
   decision: Omit<DecisionResult, 'answers'>;
 }
-export interface BrowserDialog { id: number; type: string; message: string; defaultValue: string }
+/** `pageId` names the tab that opened the dialog, matching `tabs` results; Jev always sets it. */
+export interface BrowserDialog { id: number; type: string; message: string; defaultValue: string; pageId?: number }
 export interface ActResult { status: 'executed' | 'dialog'; plan: ActionPlan; url: string; dialog?: BrowserDialog }
 export interface OperationOptions { signal?: AbortSignal; scope?: string; timeoutMs?: number }
 export interface SemanticLocateOptions extends OperationOptions { minConfidence?: number }
@@ -138,7 +139,7 @@ export interface BrowserOptions extends JevOptions {
   fileRoots?: string[];
   outputDir?: string;
   allowEvaluate?: boolean;
-  /** Hold dialogs for handle_dialog between operations too. launch() defaults to true; a borrowed Page keeps Playwright's auto-dismissal outside Jev operations. */
+  /** Hold dialogs for handle_dialog and file choosers for file_upload between operations too. launch() defaults to true; a borrowed Page keeps Playwright's default handling outside Jev operations. */
   captureDialogs?: boolean;
   /** Restricts CLI/MCP/shared dispatch; direct caller Page access is still trusted. */
   screenOnly?: boolean;

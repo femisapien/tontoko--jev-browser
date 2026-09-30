@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { ElementHandle, JSHandle, Page, Frame, Locator } from 'playwright-core';
 import type { Snapshot, ElementInfo, SemanticEvidence, SemanticLocatorProperty } from './types.js';
-import { BrowserError, type BrowserErrorCode } from './errors.js';
+import { BrowserError, browserError, type BrowserErrorCode } from './errors.js';
 import type * as DOM from './dom.js';
 
 let bundle: string | undefined;
@@ -118,6 +118,12 @@ export async function assertScope(page: Page, scope: string | undefined): Promis
   if (!scope) return;
   for (const frame of page.frames()) if (await frame.locator(`css=${scope}`).count()) return;
   throw new BrowserError('SCOPE_NOT_FOUND', 'The observation scope matched no element. Check the selector, or wait for that region to appear.');
+}
+/** Invalid scope syntax fails as INVALID_SELECTOR up front. Other failures (such as a navigation) are left to the observation that follows. */
+export async function validateScopeSyntax(page: Page, scope: string | undefined): Promise<void> {
+  if (!scope) return;
+  try { await page.mainFrame().locator(`css=${scope}`).count(); }
+  catch (error) { const mapped = browserError(error); if (mapped.code === 'INVALID_SELECTOR') throw mapped; }
 }
 /** Execute the shipped shared observation predicate, never caller/model-generated code. */
 export async function waitForFrameProgress(frame: Frame, baseline: string, timeoutMs: number, signal: AbortSignal): Promise<void> {

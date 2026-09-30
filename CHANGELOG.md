@@ -4,6 +4,13 @@
 
 - Breaking: `playwright-core` (`>=1.62.0 <2`) and `zod` (`^4.2.0`) are now peer dependencies instead of bundled `playwright` and `zod` copies, so the package shares your project's Playwright and Zod; an older `playwright-core` fails with `CONFIG`. Yarn Berry users must add them explicitly. See `docs/migration.md`.
 - Row, list, form and record context strings sent to the decision endpoint no longer include text typed into `contenteditable` editors, `<textarea>`/`<input>` controls or native `<select>` option labels; element names and labels are kept.
+- An empty or whitespace-only `JEV_MODEL` or `--model ""` now counts as unset, like the other decision settings, instead of sending an empty model name.
+- `run()` and `resume()` (CLI `run`/`resume`, MCP `browser_run`/`browser_resume`) reject an unparsable `scope` with `INVALID_SELECTOR` before observing, instead of `RUN_FAILED`.
+- A core keeps at most 32 paused continuations, dropping the least recently used, and drops a Page's continuations when that Page closes; a dropped ID fails with `CONTINUATION_NOT_FOUND`.
+- When the selected tab is closed outside a `tabs` command, operations fail with the new `TAB_CLOSED` code, which says to pick another tab with `tabs` `select`, instead of `OPERATION_FAILED`. Jev does not switch tabs by itself.
+- A pending `dialog` result now includes the `pageId` of the tab that opened it, matching `tabs` results.
+- `downloads` `list` entries now include `navigation`, the tab's navigation generation when the download started, so downloads from different documents of one tab can be told apart.
+- A core attached to a borrowed Page without `captureDialogs` no longer intercepts file choosers between its operations, so the caller's own chooser handling and a headed browser's native picker work as usual; choosers opened during a Jev operation are still held for `file_upload`.
 
 ## 0.12.2
 
