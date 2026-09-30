@@ -4,34 +4,52 @@ import { BrowserError } from './errors.js';
 import { nativeSchemas, nativeReadOnly, type NativeCommand, type NativeName } from './native-schemas.js';
 import { invalidScreenRequest, screenSchema } from './screen.js';
 
-const scope = z.string().min(1).optional();
+// Node timers overflow above 2147483647 ms; the CLI applies the same bound to its integer options.
+const positiveInteger = z.number().int().positive().max(2_147_483_647);
+const timeoutMs = positiveInteger.optional().describe('Operation budget in milliseconds; running out fails with TIMEOUT.');
+const scope = z.string().min(1).optional().describe('CSS selector limiting observation. Fails with SCOPE_NOT_FOUND when it matches no element.');
 const instruction = z.string().trim().min(1);
-const values = z.record(z.string().min(1), z.string()).optional();
+const values = z.record(z.string().min(1), z.string()).optional().describe('Named literal inputs, referred to by name in instruction. Values are withheld from Jev.');
 const runValues = z.record(z.string(),z.json()).optional();
 const fieldType = z.enum(['string', 'number', 'boolean']);
-const field = z.union([fieldType, z.object({ type: fieldType, description: z.string().optional(), nullable: z.boolean().optional() }).strict()]);
+const field = z.union([fieldType, z.object({ type: fieldType, description: z.string().optional().describe('Field meaning, sent to Jev.'), nullable: z.boolean().optional().describe('Allow null.') }).strict()]);
 const confidence = z.number().min(0).max(1).optional();
-const semanticActual = z.union([z.object({ description: instruction }).strict(), z.object({ ref: z.string().min(1) }).strict()]);
-const semanticRequest = z.object({ actual: semanticActual, expected: z.string().min(1), minConfidence: confidence, minSourceConfidence: confidence }).strict();
-const semanticBatch = z.object({ requests: z.array(semanticRequest).min(1), minConfidence: confidence, minSourceConfidence: confidence, scope, timeoutMs: z.number().int().positive().optional() }).strict();
+const minConfidence = confidence.describe('Required decision confidence (default 0.8).');
+const minSourceConfidence = confidence.describe('Required source-binding confidence (default minConfidence).');
+const semanticActual = z.union([z.object({ description: instruction.describe('Page value in words, bound to one observed source.') }).strict(), z.object({ ref: z.string().min(1).describe('Current snapshot or semantic_locate ref.') }).strict()]).describe('Actual page value: {description} or {ref}.');
+const expected = z.string().min(1).describe('Expected meaning in words. Sent to Jev unless an exact local match settles it.');
+const semanticRequest = z.object({ actual: semanticActual, expected, minConfidence, minSourceConfidence }).strict();
+const semanticBatch = z.object({ requests: z.array(semanticRequest).min(1).describe('Independent actual/expected pairs; item thresholds override the shared ones.'), minConfidence, minSourceConfidence, scope, timeoutMs }).strict();
 export const commandSchemas = {
   ...nativeSchemas,
   screen: screenSchema,
-  goto: z.object({ url: z.url() }).strict(),
+  goto: z.object({ url: z.url().describe('Absolute HTTP(S) URL.') }).strict(),
   snapshot: z.object({ scope }).strict(),
-  observe: z.object({ instruction, values, scope }).strict(),
-  act: z.object({ instruction: instruction.optional(), planId: z.string().min(1).optional(), values, scope }).strict()
+  observe: z.object({ instruction: instruction.describe('One action to plan, e.g. click Save.'), values, scope }).strict(),
+  act: z.object({ instruction: instruction.optional().describe('One action to perform. Provide exactly one of instruction or planId.'), planId: z.string().min(1).optional().describe('Single-use plan id from browser_observe. Provide exactly one of instruction or planId.'), values, scope }).strict()
     .refine(v => Number(v.instruction !== undefined) + Number(v.planId !== undefined) === 1, { message: 'Provide exactly one of instruction or planId.' }),
-  extract: z.object({ instruction, fields: z.record(z.string().min(1), field).optional(), schema: z.record(z.string(), z.unknown()).optional(), scope, recordsScope: scope }).strict()
+  extract: z.object({
+    instruction: instruction.describe('What to copy from the page.'),
+    fields: z.record(z.string().min(1), field).optional().describe('Output field name to scalar type, or {type, description, nullable}. Provide exactly one of fields or schema.'),
+    schema: z.record(z.string(), z.unknown()).optional().describe('JSON Schema for nested objects and arrays of observed records. Provide exactly one of fields or schema.'),
+    scope, recordsScope: z.string().min(1).optional().describe('CSS selector matching each repeated record, such as a table row or card.'),
+  }).strict()
     .refine(v => Number(v.fields !== undefined) + Number(v.schema !== undefined) === 1, { message: 'Provide exactly one of fields or schema (JSON Schema).' }),
-  semantic_locate: z.object({ description: instruction, minConfidence: confidence, scope }).strict(),
-  semantic_locate_batch: z.object({ descriptions: z.array(instruction).min(1), minConfidence: confidence, scope }).strict(),
-  semantic_compare: z.object({ actual: semanticActual, expected: z.string().min(1), minConfidence: confidence, minSourceConfidence: confidence, scope }).strict(),
-  semantic_assert: z.object({ actual: semanticActual, expected: z.string().min(1), minConfidence: confidence, minSourceConfidence: confidence, scope }).strict(),
+  semantic_locate: z.object({ description: instruction.describe('The one element to find, in words. Sent to Jev.'), minConfidence, scope }).strict(),
+  semantic_locate_batch: z.object({ descriptions: z.array(instruction).min(1).describe('Independent element descriptions; one target is returned per item.'), minConfidence, scope }).strict(),
+  semantic_compare: z.object({ actual: semanticActual, expected, minConfidence, minSourceConfidence, scope }).strict(),
+  semantic_assert: z.object({ actual: semanticActual, expected, minConfidence, minSourceConfidence, scope }).strict(),
   semantic_compare_batch: semanticBatch,
   semantic_assert_batch: semanticBatch,
-  run: z.object({ instruction, values: runValues, semanticInputs:z.record(z.string().regex(/^\/(?:[^~]|~[01])*$/),z.number().min(0).max(1)).optional(), scope, maxSteps: z.number().int().positive().optional(), maxDecisions:z.number().int().positive().optional(),decisionRetries:z.number().int().min(0).max(2).optional(),settleTimeoutMs:z.number().int().positive().optional(),timeoutMs:z.number().int().positive().optional(),expect:z.union([nativeSchemas.assert,z.array(nativeSchemas.assert).min(1)]).optional() }).strict(),
-  resume: z.object({ continuationId: z.string().min(1), values: runValues, scope, timeoutMs:z.number().int().positive().optional() }).strict(),
+  run: z.object({
+    instruction: instruction.describe('Goal to complete, e.g. add a contact and save it.'),
+    values: runValues.describe('Nested JSON inputs, reported by JSON Pointer path. Values are withheld from Jev unless listed in semanticInputs.'),
+    semanticInputs: z.record(z.string().regex(/^\/(?:[^~]|~[01])*$/),z.number().min(0).max(1)).optional().describe('JSON Pointer of a supplied value to a 0-1 threshold. Discloses that value so Jev may match it to differently worded options.'),
+    scope: scope.describe('CSS selector limiting observation. Unlike browser_act, a scope matching nothing does not fail with SCOPE_NOT_FOUND.'), maxSteps: positiveInteger.optional().describe('Browser action budget (default 100).'), maxDecisions: positiveInteger.optional().describe('Decision request budget (default 32).'),
+    decisionRetries: z.number().int().min(0).max(2).optional().describe('Retries per read-only decision request (default 2).'), settleTimeoutMs: positiveInteger.optional().describe('Longest wait for the page to settle after an action (default 2000).'), timeoutMs,
+    expect: z.union([nativeSchemas.assert,z.array(nativeSchemas.assert).min(1)]).optional().describe('browser_assert conditions that must pass for a verified completion.'),
+  }).strict(),
+  resume: z.object({ continuationId: z.string().min(1).describe('continuation.id from a stopped browser_run or browser_resume result.'), values: runValues.describe('Additional nested inputs; supplied values cannot change.'), scope: scope.describe('Must equal the original run scope when given.'), timeoutMs }).strict(),
   screenshot: z.object({}).strict(),
   close: z.object({}).strict(),
 };
