@@ -333,3 +333,49 @@ test('a scroll that moves nothing still returns promptly',async t=>{
  seen=await core.screen({action:'scroll',deltaY:-200,observationId:seen.observationId});
  assert.ok(performance.now()-started<2_000);assert.equal(seen.action.outcome,'executed');
 });
+// Some frameworks call history.replaceState or pushState with the current URL on scroll: here on every scroll event and once more after it settles.
+const historyOnScroll=method=>scrollBlocks+'<script>let idle;const update=()=>history.'+method+'(history.state,"",location.href);'+
+ 'addEventListener("scroll",()=>{update();clearTimeout(idle);idle=setTimeout(update,150);});</script>';
+for(const method of ['replaceState','pushState'])test('a same-URL history.'+method+' on scroll keeps the scroll observation usable',async t=>{
+ const {core,page}=await fixture(t);
+ const s=await site(t,(req,res)=>{res.setHeader('content-type','text/html');res.end(historyOnScroll(method));});
+ await page.goto(s.url);
+ let seen=await core.screen({action:'look'});
+ seen=await core.screen({action:'scroll',x:100,y:100,deltaY:640,observationId:seen.observationId});
+ const y=await page.evaluate(()=>scrollY);assert.ok(y>0);const nav=seen.navigated;
+ await new Promise(resolve=>setTimeout(resolve,300));
+ const settled=await page.screenshot({type:'png',scale:'css'});
+ assert.ok(settled.equals(Buffer.from(seen.frames[0].data,'base64')),'the frame shows the scrolled position');
+ seen=await core.screen({action:'click',x:100,y:100,observationId:seen.observationId});
+ assert.equal(await page.title(),'clicked-'+Math.floor((y+100)/320));assert.equal(seen.action.outcome,'executed');assert.equal(nav,false);
+ // A same-URL history update between actions does not invalidate the observation either.
+ await page.evaluate(m=>history[m](history.state,'',location.href),method);
+ seen=await core.screen({action:'move',x:5,y:5,observationId:seen.observationId});assert.equal(seen.action.outcome,'executed');
+});
+test('a same-URL history update during capture neither retakes nor stales the returned observation',async t=>{
+ const {core,page}=await fixture(t);let updates=0;const screenshot=page.screenshot.bind(page);
+ const s=await site(t,(req,res)=>{res.setHeader('content-type','text/html');res.end(button('Start'));});
+ await page.goto(s.url);
+ page.screenshot=async(...args)=>{updates++;await Promise.all([page.waitForEvent('framenavigated'),page.evaluate(()=>history.replaceState(history.state,'',location.href))]);return screenshot(...args);};
+ let seen=await core.screen({action:'look'});
+ seen=await core.screen({action:'click',x:60,y:40,observationId:seen.observationId,capture:{frames:2,intervalMs:20}});
+ assert.equal(seen.navigated,false);assert.equal(seen.frames.length,2);assert.equal(updates,3,'no capture was retaken');
+ await core.screen({action:'move',x:5,y:5,observationId:seen.observationId});
+ assert.equal(await page.locator('button').textContent(),'Clicked');
+});
+test('history updates that change the URL and cross-document reloads still invalidate the observation',async t=>{
+ const {core,page}=await fixture(t);
+ const s=await site(t,(req,res)=>{res.setHeader('content-type','text/html');res.end(scrollBlocks);});
+ await page.goto(s.url);
+ let seen=await core.screen({action:'look'});
+ await page.evaluate(()=>history.pushState(null,'','/other'));
+ await assert.rejects(core.screen({action:'move',x:5,y:5,observationId:seen.observationId}),{code:'STALE_SCREEN'});
+ seen=await core.screen({action:'look'});
+ await page.evaluate(()=>history.replaceState(null,'','/third'));
+ await assert.rejects(core.screen({action:'move',x:5,y:5,observationId:seen.observationId}),{code:'STALE_SCREEN'});
+ // A reload keeps the URL but replaces the document.
+ seen=await core.screen({action:'look'});await page.reload();
+ await assert.rejects(core.screen({action:'move',x:5,y:5,observationId:seen.observationId}),{code:'STALE_SCREEN'});
+ seen=await core.screen({action:'look'});await page.goto(new URL('/fourth',s.url).href);
+ await assert.rejects(core.screen({action:'move',x:5,y:5,observationId:seen.observationId}),{code:'STALE_SCREEN'});
+});
