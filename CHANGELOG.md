@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- A screen `scroll` now captures after the scroll settles, including smooth scrolling, instead of racing the wheel. The returned image no longer shows the unscrolled page, and the next input with its `observationId` no longer fails with `STALE_SCREEN`.
+- The screen journal `header` row's `startedAt` now reports when the session was created instead of the later time the first row was written.
+- Documented that a `target="_blank"` link opens a tab a screen-only session cannot see.
+
 ## 0.12.0
 
 - Breaking: `JEV_API_KEY` and `TYPESAFE_API_KEY` are sent only to hosted Jev at `https://api.typesafe.ai`. A custom `baseURL` / `JEV_BASE_URL` is authenticated only by an explicit `apiKey` option or the new `JEV_ENDPOINT_API_KEY`, a key is never sent over plain HTTP to a non-loopback host (`CONFIG`), and the upstream SDK's `TYPESAFE_BASE_URL` no longer redirects hosted keys. See `docs/migration.md`.
