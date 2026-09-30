@@ -73,7 +73,7 @@ SDK users can pass `{actual:{locator:page.getByTestId('plan')},expected:'Profess
 
 Mixed model provenance is now reported in `models`; do not require a singular `model` when it is unknown or multiple models participated. Semantic failures now include `error.semantic` expected/results; treat logs as potentially sensitive UI data. Existing `run`, `resume`, native actions and deterministic assertions remain available without a new planner or backend service.
 
-## Borrowed-page dialogs and tab-scoped events (next release)
+## Borrowed-page dialogs and tab-scoped events (0.12.0)
 
 A core attached to a borrowed Page no longer holds dialogs between its
 operations. Playwright's default dismissal applies to the caller's own Page
@@ -89,7 +89,7 @@ on the selected tab, and fails with `NO_FILE_CHOOSER` after that tab navigates.
 Single-tab sessions see the same entries as before, with added `pageId` and
 download `id` fields.
 
-## Timeouts and error codes (next release)
+## Timeouts and error codes (0.12.0)
 
 An operation whose `timeoutMs` budget runs out now fails with `TIMEOUT`
 instead of `CANCELLED`. `CANCELLED` remains for an aborted caller `signal` and
@@ -115,7 +115,7 @@ not in that union.
 resources. It still never closes a borrowed Page, context or browser. See
 [errors](api.md#errors-and-automation) for every new code.
 
-## Removing the Pi adapter (next minor release)
+## Removing the Pi adapter (0.10.0)
 
 The `@tontoko/jev-browser/pi` export, bundled Pi adapter and its dedicated launch
 guide are removed. Use the existing SDK, persistent CLI or MCP interfaces;
@@ -134,7 +134,7 @@ launch flags are not settings for the generic MCP server. Map only supported
 options using the ordinary CLI/MCP documentation. The published v0.9.0 archive
 and its historical verification remain unchanged.
 
-## Hosted keys and custom endpoints (next release)
+## Hosted keys and custom endpoints (0.12.0)
 
 `JEV_API_KEY` and `TYPESAFE_API_KEY` are now sent only to hosted Jev
 (`https://api.typesafe.ai`). Earlier releases also sent them to any custom
@@ -155,7 +155,7 @@ The upstream SDK's `TYPESAFE_BASE_URL` no longer redirects this library; use
 `JEV_BASE_URL`. Empty key variables, such as `JEV_API_KEY=` from
 `.env.example`, now count as unset.
 
-## CLI/MCP capabilities and upload roots (next release)
+## CLI/MCP capabilities and upload roots (0.13.0)
 
 The CLI and MCP server now start with a smaller tool surface, like
 `@playwright/mcp`. Opt-in tools are enabled with `--caps`, a comma-separated
@@ -193,7 +193,7 @@ controls evaluation, and `fileRoots` still defaults to the working directory.
 `createMcpServer()` registers every tool unless you pass its new
 `capabilities` option.
 
-## Observation scope and long text (next release)
+## Observation scope and long text (0.12.0)
 
 An explicit `scope` that matches no element in any frame now fails with
 `SCOPE_NOT_FOUND` in `snapshot`, `observe`, `act`, `extract` and the semantic
@@ -210,7 +210,7 @@ toward `maxTexts`, so a page with many long paragraphs can reach
 text of a known element with a Playwright Locator (for example a semantic
 `{locator, property: 'text'}` actual) rather than from a truncated source.
 
-## Playwright and Zod peer dependencies (next release)
+## Playwright and Zod peer dependencies (0.13.0)
 
 `playwright` and `zod` were bundled dependencies. They are now peer
 dependencies: `playwright-core` `>=1.62.0 <2` and `zod` `^4.2.0`. The package
@@ -234,7 +234,7 @@ which `playwright-core` added in 1.62; `z.fromJSONSchema` needs Zod 4.2.
 - Import Playwright APIs in your own code from your own `playwright`,
   `playwright-core` or `@playwright/test`; this package never provided them.
 
-## Strict select values and fixed session options (next release)
+## Strict select values and fixed session options (0.13.0)
 
 Native `select_option` with `by: 'value'` matches option values exactly. Earlier
 releases passed the strings to Playwright unchanged, so `by: 'value'` also

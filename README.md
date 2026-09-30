@@ -13,7 +13,7 @@ Native operations and assertions run **without an AI key**. Natural-language ope
 Node.js **22.15 or newer**. Download the package from [GitHub Releases](https://github.com/tontoko/jev-browser/releases), then install it into your project:
 
 ```sh
-npm install --save-dev ./tontoko-jev-browser-0.12.2.tgz
+npm install --save-dev ./tontoko-jev-browser-0.13.0.tgz
 npx jev-browser install chromium
 ```
 
@@ -137,7 +137,7 @@ Explicit `values` are kept out of decision payloads. Quoted values are copied ve
 
 ## MCP: native and natural-language tools
 
-For a reviewer that should discover the product from visible UI, use a separate `--screen-only` session. It exposes viewport images and coordinate mouse, focused keyboard, scroll and history inputs through one shared `screen` command. DOM/ARIA snapshots, selectors, semantic operations, network diagnostics and URL metadata are unavailable through that session's command surface. Every action returns current images and actual timestamps; an outer vision-capable model supplies the review judgment. See [screen-only review](docs/screen-review.md) for trusted setup, recordings, freshness and remaining browser limitations. Agent hosts connect through the existing SDK, CLI or MCP surface; this package has no harness-specific adapter. See [migration](docs/migration.md#removing-the-pi-adapter-next-minor-release) for the removed `./pi` entry point.
+For a reviewer that should discover the product from visible UI, use a separate `--screen-only` session. It exposes viewport images and coordinate mouse, focused keyboard, scroll and history inputs through one shared `screen` command. DOM/ARIA snapshots, selectors, semantic operations, network diagnostics and URL metadata are unavailable through that session's command surface. Every action returns current images and actual timestamps; an outer vision-capable model supplies the review judgment. See [screen-only review](docs/screen-review.md) for trusted setup, recordings, freshness and remaining browser limitations. Agent hosts connect through the existing SDK, CLI or MCP surface; this package has no harness-specific adapter. See [migration](docs/migration.md#removing-the-pi-adapter-0100) for the removed `./pi` entry point.
 
 After installing the tarball, configure your MCP client:
 

@@ -1,14 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.13.0
 
-- `screen` no longer fails with `SCREEN_FAILED` (`unknown`) when Chromium has not yet rendered a fresh page's first frame; it waits for the frame within the operation budget and reports `timeout` if it never arrives.
 - Breaking: `playwright-core` (`>=1.62.0 <2`) and `zod` (`^4.2.0`) are now peer dependencies instead of bundled `playwright` and `zod` copies, so the package shares your project's Playwright and Zod; an older `playwright-core` fails with `CONFIG`. Yarn Berry users must add them explicitly. See `docs/migration.md`.
+- Breaking: the CLI and MCP server enable the `cookies`, `storage`, `storage_state`, `route`, `trace`, `evaluate` and `init_script` tools only through `--caps storage,network,trace,evaluate`; disabled tools are left out of MCP `tools/list` and fail with `CAPABILITY_DISABLED` in the CLI. `--allow-evaluate` is kept as an alias for `--caps evaluate`. See `docs/migration.md`.
+- Breaking: CLI and MCP uploads no longer read from the working directory by default; pass `--file-root DIR` (`--file-root .` restores the old behavior), otherwise `file_upload` fails with `FILE_ACCESS_DENIED`. The SDK default is unchanged. See `docs/migration.md`.
 - Breaking: native `select_option` with `by: 'value'` now matches option values exactly instead of value or label; omit `by` to keep matching either. A value with no matching option fails with `TIMEOUT` when the operation budget ends. See `docs/migration.md`.
 - Breaking: `open` of an existing named session with different launch options (browser, headless, context options, storage state, profile, endpoints, limits, timeouts, file roots, `--caps` and other flags fixed at start) now fails with `SESSION_MODE_MISMATCH` instead of silently keeping the original options. See `docs/migration.md`.
 - Breaking: `cdpEndpoint` or `wsEndpoint` with `contextOptions` or `storageState` now fails with `CONFIG` when the attached browser already has a context, instead of silently ignoring them. See `docs/migration.md`.
-- Breaking: the CLI and MCP server enable the `cookies`, `storage`, `storage_state`, `route`, `trace`, `evaluate` and `init_script` tools only through `--caps storage,network,trace,evaluate`; disabled tools are left out of MCP `tools/list` and fail with `CAPABILITY_DISABLED` in the CLI. `--allow-evaluate` is kept as an alias for `--caps evaluate`. See `docs/migration.md`.
-- Breaking: CLI and MCP uploads no longer read from the working directory by default; pass `--file-root DIR` (`--file-root .` restores the old behavior), otherwise `file_upload` fails with `FILE_ACCESS_DENIED`. The SDK default is unchanged.
 - Row, list, form and record context strings sent to the decision endpoint no longer include text typed into `contenteditable` editors, `<textarea>`/`<input>` controls or native `<select>` option labels; element names and labels are kept.
 - An empty or whitespace-only `JEV_MODEL` or `--model ""` now counts as unset, like the other decision settings, instead of sending an empty model name.
 - `run()` and `resume()` (CLI `run`/`resume`, MCP `browser_run`/`browser_resume`) reject an unparsable `scope` with `INVALID_SELECTOR` before observing, instead of `RUN_FAILED`.
@@ -17,6 +16,7 @@
 - A pending `dialog` result now includes the `pageId` of the tab that opened it, matching `tabs` results.
 - `downloads` `list` entries now include `navigation`, the tab's navigation generation when the download started, so downloads from different documents of one tab can be told apart.
 - A core attached to a borrowed Page without `captureDialogs` no longer intercepts file choosers between its operations, so the caller's own chooser handling and a headed browser's native picker work as usual; choosers opened during a Jev operation are still held for `file_upload`.
+- `screen` no longer fails with `SCREEN_FAILED` (`unknown`) when Chromium has not yet rendered a fresh page's first frame; it waits for the frame within the operation budget and reports `timeout` if it never arrives.
 - A screenOnly session now recovers from a native dialog: it is reported once with `SCREEN_DIALOG_UNSUPPORTED` and dismissed, instead of failing every later screen call with `DIALOG_PENDING` until a restart.
 - A screenOnly session now recovers from a new tab opened by the page, such as a `target="_blank"` link: it is reported once with `SCREEN_POPUP_UNSUPPORTED` and closed, instead of failing every later screen call while the tab stays open.
 - `snapshot`, `observe`, `act`, `extract`, the semantic tools and `run` accept per-call `maxElements`, `maxTexts` and `maxCandidates` (clamped to 1000 / 2000 / 2000) and `exclude` CSS selectors, in the SDK, MCP and CLI (`--exclude`), so one large page no longer needs a new session with higher limits.
