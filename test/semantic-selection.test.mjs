@@ -125,3 +125,25 @@ test('selection: a stale semantic proposal cannot override a fresh literal bindi
   assert.equal(r.status,'complete',JSON.stringify(r));assert.equal(f.submissions.length,1);
   assert.equal(f.submissions[0].a9,'JPX');assert.equal(r.inputs.find(i=>i.path==='/country').resolution,undefined);
 });
+
+test('selection fixture: an injected engine keeps its own confidence and decide method',async t=>{
+  // The fixture's 0.95 confidence applies only to its own scripted engine; an injected (for example real) engine is measured as is.
+  const scripted=engine((q,r,id)=>{
+    if(id.startsWith('bind_'))return r.state.page.elements.find(e=>e.name===(q.instructions.includes('"/country"')?'Country':'Private note'))?.id??'__none__';
+    if(id.startsWith('effect_'))return 'commit';
+    if(id==='action')return c=>c?.kind==='click'&&c.target?.name==='Save';
+    if(id.startsWith('selection_'))return 'option_1';
+    if(id==='completion')return 'complete';
+    if(id.startsWith('read_'))return r.state.sources.find(s=>s.context.startsWith(q.instructions.includes('"/country"')?'Country ':'Private note '))?.id??'__none__';
+    return '__none__';
+  });
+  let selection;
+  const injected={async decide(r,o){const result=await scripted.decide(r,o);if(Object.keys(r.questions).some(id=>id.startsWith('selection_'))){for(const answer of Object.values(result.answers))answer.confidence=0.2;selection=result;}return result;}};
+  const decide=injected.decide;
+  const f=await selectionFixture(t,browser,{engine:injected});
+  const r=await f.core.run(instruction,{values,semanticInputs:{'/country':0.8}});
+  assert.equal(r.status,'stopped',JSON.stringify(r));assert.equal(r.reason,'unresolved-input');assert.equal(f.submissions.length,0);
+  assert.equal(r.blockers[0].reason,'low-confidence');assert.equal(r.blockers[0].confidence,0.2);
+  assert.ok(Object.values(selection.answers).every(answer=>answer.confidence===0.2));
+  assert.equal(injected.decide,decide);
+});
