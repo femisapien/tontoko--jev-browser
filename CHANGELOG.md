@@ -1,18 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.14.0
 
 - Opt-in image understanding: `screenDecide` (CLI `screen_decide`, MCP `browser_screen_decide`, also in screen-only sessions) captures the viewport once, has an OpenAI-compatible Chat Completions endpoint you configure (`vision` option, or `--vision-base-url` and `--vision-model` with `JEV_VISION_API_KEY`) describe it, and answers your questions with Jev from that text; `decideFromScreen` and `ChatCompletionsImageUnderstanding` are exported for your own captures. Screenshots go only to that HTTPS or loopback endpoint, only when called, and no Jev key is sent to it.
-- A native dialog that opens during a `screen` capture is now always reported once as `SCREEN_FAILED` (or `SCREEN_INTERRUPTED` after an input) with reason `dialog`; in screen-only sessions it could instead surface as `SCREEN_DIALOG_UNSUPPORTED` after a retaken capture, depending on which timeout fired first.
+- New opt-in `screenFollowPopups` launch option (CLI/MCP `--screen-follow-popups`, with screen-only mode): a new tab the observed page opens becomes the observed page instead of being closed, results report `pageSwitched`, and closing that tab returns to its opener.
 - `act`, `observe` and `run` no longer send link URLs in their decision state (observe on a 40-row table with a link per row: ~99.5 KB to ~86.2 KB); `extract` and semantic evidence keep them, and link `href` sources now have their own budget instead of counting toward `maxTexts`.
 - An `act`/`observe` decision request larger than 128 KiB now fails with `OBSERVATION_LIMIT` before any provider call instead of a provider `PROVIDER_ERROR`; decision requests omit `frame` for the main frame.
-- New opt-in `screenFollowPopups` launch option (CLI/MCP `--screen-follow-popups`, with screen-only mode): a new tab the observed page opens becomes the observed page instead of being closed, results report `pageSwitched`, and closing that tab returns to its opener.
 - Plans, snapshot refs, `run` actions and owned combobox options are re-checked right before the effect, after caller policies and model decisions, against the Page, document, frame and observation scope they were captured in; a target that left them fails with `STALE_TARGET` instead of being clicked.
 - `run()` adopts a UI readback as a checkpoint only after re-reading that the same result record and page headings/status/alerts are still shown; otherwise it observes again (the save is never repeated).
 - `run()` progress waits watch only the observed frames and scope roots, so a change in an unrelated frame or region outside `scope` no longer ends a wait early.
 - If the Page closes while a `run()` pauses, its own result or error is returned instead of a failure from preparing carried wizard input, and no continuation is kept.
 - `run()` re-decides instead of executing a speculative action that targets a control whose input it just applied, and a model "done" answer given before inputs were applied no longer skips to the final `expect`.
 - `extract()` evidence keys escape a literal `.` or `\` inside a field name with `\` (for example `a\.b` for a field named `a.b`), and a field under an empty name no longer shares a key with a root field, so different fields never share an evidence key; ordinary names are unchanged.
+- A native dialog that opens during a `screen` capture is now always reported once as `SCREEN_FAILED` (or `SCREEN_INTERRUPTED` after an input) with reason `dialog`; in screen-only sessions it could instead surface as `SCREEN_DIALOG_UNSUPPORTED` after a retaken capture, depending on which timeout fired first.
+- Documented that `console_messages` and `network_requests` telemetry is Page-scoped: several cores sharing one Page each record all of that Page's events in their own buffer, and `clear: true` empties only that core's buffer.
 
 ## 0.13.0
 
