@@ -4,8 +4,8 @@ import { lstat, mkdir, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
-import { BrowserError } from './errors.js';
-import type { BrowserLaunchOptions, RunResult, SemanticFailure } from './types.js';
+import { BrowserError, type BrowserErrorCode, type PublicError } from './errors.js';
+import type { BrowserLaunchOptions } from './types.js';
 import type { Command } from './commands.js';
 
 export const descriptorSchema = z.object({ name: z.string(), cwd: z.string(), pid: z.number().int().positive(), port: z.number().int().min(1).max(65535), token: z.string().regex(/^[0-9a-f]{64}$/), createdAt: z.string() });
@@ -34,9 +34,9 @@ export async function sendSession(name: string, command: Command | { command: 'h
   let response: Response;
   try { response = await fetch(`http://127.0.0.1:${d.port}/command`, { method: 'POST', headers: { authorization: `Bearer ${d.token}`, 'content-type': 'application/json' }, body: JSON.stringify(command), signal: signal ?? AbortSignal.timeout(300_000) }); }
   catch { if (signal?.aborted) signal.throwIfAborted(); throw new BrowserError('SESSION_UNAVAILABLE', `Session ${name} is not responding. No browser action was retried.`); }
-  const envelope = await response.json() as { ok: boolean; result?: Record<string, unknown>; error?: { code: string; message: string; partial?: RunResult; semantic?: SemanticFailure } };
+  const envelope = await response.json() as { ok: boolean; result?: Record<string, unknown>; error?: Partial<PublicError> };
   if (!response.ok || !envelope.ok) {
-    const error=new BrowserError(envelope.error?.code ?? 'SESSION_ERROR', envelope.error?.message ?? 'The session command failed.');
+    const error=new BrowserError(envelope.error?.code ?? 'SESSION_ERROR', envelope.error?.message ?? 'The session command failed.', { retryable: envelope.error?.retryable === true });
     if(envelope.error?.partial)error.partial=envelope.error.partial;
     if(envelope.error?.semantic)error.semantic=envelope.error.semantic;
     throw error;
@@ -78,8 +78,8 @@ export async function openSession(name: string, options: BrowserLaunchOptions, u
     child.once('error', fail);
     child.once('exit', () => fail(new BrowserError('SESSION_START_FAILED', 'Browser session exited before it was ready. Check browser installation and launch options.')));
     child.on('message', message => {
-      const result = message as { ready?: boolean; error?: { code: string; message: string }; url?: string; screenOnly?: boolean };
-      if (result.error) { fail(new BrowserError(result.error.code, result.error.message)); return; }
+      const result = message as { ready?: boolean; error?: { code: BrowserErrorCode; message: string; retryable?: boolean }; url?: string; screenOnly?: boolean };
+      if (result.error) { fail(new BrowserError(result.error.code, result.error.message, { retryable: result.error.retryable === true })); return; }
       if (!result.ready || settled) return;
       settled = true; clearTimeout(timer); child.disconnect(); child.unref();
       resolve({ session: name, status: 'open', ...(result.screenOnly ? { screenOnly: true } : { url: result.url }), reused: false });

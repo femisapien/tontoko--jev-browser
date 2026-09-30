@@ -105,7 +105,7 @@ npx jev-browser close --session work
 
 A named session survives separate CLI invocations. Its authenticated loopback endpoint is stored in a private directory, names are scoped to the working directory, and an idle session expires after 30 minutes. `open` defaults to session `default`; commands without `--session` reuse that session when it exists. `--url` without `--session` runs in a fresh browser.
 
-Every command accepts `--args JSON`, and `--args -` reads arguments from stdin. `session` is also available as a JSONL pipe for tools that keep stdin open. All results are JSON. Exit status is `0` for command success, `1` for errors/assertion failures, and `2` for a stopped/unverified agent or a pending dialog.
+Every command accepts `--args JSON`, and `--args -` reads arguments from stdin. `session` is also available as a JSONL pipe for tools that keep stdin open. All results are JSON. An error is `{"ok":false,"error":{"code":"…","message":"…","retryable":false}}`; see [error codes](docs/api.md#errors-and-automation). Exit status is `0` for command success, `1` for errors/assertion failures, and `2` for a stopped/unverified agent or a pending dialog.
 
 ```sh
 npx jev-browser fill 'input[name=email]' 'user@example.invalid' --session work

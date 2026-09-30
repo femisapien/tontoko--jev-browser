@@ -81,7 +81,7 @@ export async function runGoal(host: RunHost, instruction: string, options: RunOp
     } catch (error) {
       if (error instanceof BrowserError) throw error;
       signal.throwIfAborted();
-      throw new BrowserError('PROVIDER_ERROR','The decision provider failed; browser effects were not replayed.');
+      throw new BrowserError('PROVIDER_ERROR','The decision provider failed; browser effects were not replayed.',{cause:error});
     }
     signal.throwIfAborted();
     const { answers: unused, ...metadata } = result; lastDecision = metadata;
@@ -456,7 +456,7 @@ Input bindings listed in state.inputs are available locally, not missing. Their 
     }
   }catch(error){
     if(error instanceof BrowserError&&error.code==='STEP_LIMIT')return finish('stopped','step-limit');
-    const publicError=error instanceof BrowserError?error:new BrowserError(runSignal.aborted?'CANCELLED':'RUN_FAILED','The run was interrupted; inspect its partial result before retrying.');
+    const publicError=error instanceof BrowserError?error:new BrowserError(runSignal.aborted?'CANCELLED':'RUN_FAILED','The run was interrupted; inspect its partial result before retrying.',{cause:error});
     publicError.partial=finish(commit?'unverified':'stopped',commit?'effect-unknown':'error');throw publicError;
   }finally{await Promise.allSettled([...captures,...regionIndexes].map(observed=>observed.dispose()));}
 }

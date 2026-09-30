@@ -5,7 +5,7 @@ import { chromium, firefox, webkit, type Page, type ElementHandle } from 'playwr
 import { z } from 'zod';
 import type { EntryType } from '@typesafe-ai/sdk';
 import { JevDecisionEngine, type DecisionEngine, type DecisionRequest } from './decision.js';
-import { BrowserError } from './errors.js';
+import { BrowserError, browserError, diagnostic, launchError, obscuredTarget } from './errors.js';
 import { capture, publicURL, verifyTarget, currentSemanticEvidence, readLocatorEvidence, semanticWithinScope, captureComboboxChoice, captureRegions, verifyOwnedOption, type Captured } from './observation.js';
 import { actionCandidates, actionDescription, modelElementId, inputBindings, modelElement, resolveSelectChoice } from './actions.js';
 import { flattenInputs } from './bindings.js';
@@ -16,8 +16,23 @@ import { compareSemanticWork, elementEvidence, locateSemanticTargets, semanticTh
 import { parseNative, nativeSchemas, nativeReadOnly, type NativeCommand } from './native-schemas.js';
 import type { ActionPlan, ActOptions, ActResult, BrowserOptions, BrowserLaunchOptions, ExtractResult, ExtractOptions, GoalCheckpoint, OperationOptions, ResumeOptions, RunOptions, RunResult, RunValue, Snapshot, SemanticEvidence, SemanticLocateOptions, SemanticTarget, SemanticActual, SemanticCompareOptions, SemanticComparisonRequest, SemanticComparisonResult } from './types.js';
 
-interface Operation { signal: AbortSignal; deadline: number }
+interface Operation { signal: AbortSignal; budget: AbortSignal; deadline: number; timeoutMs: number; effect?: boolean }
 const pageLeases = new WeakMap<Page, JevBrowser>();
+// Page evaluation has no Playwright timeout. After cancellation, work that ignores the signal gets this long to unwind.
+const SETTLE_GRACE_MS = 1_000;
+async function within(work: Promise<unknown>, ms: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try { await Promise.race([work, new Promise(resolve => { timer = setTimeout(resolve, ms); })]); }
+  finally { clearTimeout(timer); void work.catch(() => undefined); }
+}
+function settle<T>(task: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let timer: NodeJS.Timeout | undefined;
+    const abort = () => { timer = setTimeout(() => reject(signal.reason), SETTLE_GRACE_MS); };
+    if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+    task.then(resolve, reject).finally(() => { clearTimeout(timer); signal.removeEventListener('abort', abort); });
+  });
+}
 interface Pending { plan: ActionPlan; captured: Captured; values: Record<string, string> }
 interface CarriedState { inputPaths: string[]; context: string }
 interface ContinuationState { resolutions?: ResolvedInput[]; carried?: CarriedState; page: Page; origin: string; instruction: string; options: RunOptions; checkpoints: GoalCheckpoint[]; checkpointedInputs: string[]; pendingUnknown?: PendingCommitState; verifiedActionKeys?: string[] }
@@ -100,15 +115,16 @@ export class JevBrowser {
     const name = options.browser ?? process.env.JEV_BROWSER ?? 'chromium';
     if (!['chromium', 'firefox', 'webkit'].includes(name)) throw new BrowserError('CONFIG', 'Browser must be chromium, firefox or webkit.');
     const type = { chromium, firefox, webkit }[name as 'chromium' | 'firefox' | 'webkit'];
+    const start = <T>(open: () => Promise<T>): Promise<T> => open().catch(error => { throw launchError(error, name); });
     const contextOptions = { ...options.contextOptions, ...(options.storageState ? { storageState: options.storageState } : {}) };
     if (options.userDataDir) {
-      const context = await type.launchPersistentContext(options.userDataDir, { ...contextOptions, headless: options.headless ?? true, ...options.launchOptions });
+      const context = await start(() => type.launchPersistentContext(options.userDataDir!, { ...contextOptions, headless: options.headless ?? true, ...options.launchOptions }));
       try { const core = new JevBrowser({ ...options, captureDialogs: options.captureDialogs ?? true, page: context.pages()[0] ?? await context.newPage() }); core.ownedCleanup = () => context.close(); return core; }
       catch (error) { await context.close(); throw error; }
     }
-    const browser = options.cdpEndpoint ? await chromium.connectOverCDP(options.cdpEndpoint)
-      : options.wsEndpoint ? await type.connect(options.wsEndpoint)
-      : await type.launch({ headless: options.headless ?? true, ...options.launchOptions });
+    const browser = await start(() => options.cdpEndpoint ? chromium.connectOverCDP(options.cdpEndpoint)
+      : options.wsEndpoint ? type.connect(options.wsEndpoint)
+      : type.launch({ headless: options.headless ?? true, ...options.launchOptions }));
     try {
       const attached = !!(options.cdpEndpoint || options.wsEndpoint);
       const context = attached && browser.contexts()[0] || await browser.newContext(contextOptions);
@@ -145,6 +161,7 @@ export class JevBrowser {
         throw new BrowserError('ACTION_DENIED', 'The caller policy denied this native operation.');
       operation.signal.throwIfAborted();
       const mutates = !nativeReadOnly.has(parsed.command) && !(parsed.command === 'tabs' && parsed.action === 'list') && !(parsed.command === 'downloads' && parsed.action === 'list');
+      if (mutates) operation.effect = true;
       try { return await this.nativeBrowser.execute(parsed, { signal: operation.signal, timeoutMs: this.remaining(operation) }); }
       finally { if (mutates) await this.invalidatePlan(); }
     }, parsed.command);
@@ -164,6 +181,7 @@ export class JevBrowser {
         return await this.screenCore().execute(request, context,
           this.options.allowCommand ? async (request, operation) => this.options.allowCommand!({ command: 'screen', request: structuredClone(request) }, operation) : undefined,
           async action => {
+            operation.effect = true;
             const result = await this.nativeBrowser.action(action);
             if (result.status === 'dialog') throw new BrowserError('SCREEN_DIALOG_UNSUPPORTED', 'A browser-native dialog opened. It cannot be observed by this viewport tool; this is a tool capability limit, not a product failure.');
           });
@@ -175,18 +193,38 @@ export class JevBrowser {
   }
   private async exclusive<T>(options: OperationOptions, fn: (operation: Operation) => Promise<T>, command?: string): Promise<T> {
     if (this.closed) throw new BrowserError('CLOSED', 'This browser session is closed.');
-    if (this.active || pageLeases.has(this.page)) throw new BrowserError('BUSY', 'This Page already has an active operation. Await it, or use a separate Page.');
+    if (this.active || pageLeases.has(this.page)) throw new BrowserError('BUSY', 'This Page already has an active operation. Await it, or use a separate Page.', { retryable: true });
     this.nativeBrowser.guard(command);
-    const timeoutMs = positiveInteger(options.timeoutMs ?? this.timeoutMs, 'timeoutMs');
-    const signal = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(timeoutMs), ...(options.signal ? [options.signal] : [])]);
-    const operation = { signal, deadline: performance.now() + timeoutMs };
-    signal.throwIfAborted();
+    const timeoutMs = positiveInteger(options.timeoutMs ?? this.timeoutMs, 'timeoutMs'), budget = AbortSignal.timeout(timeoutMs);
+    const signal = AbortSignal.any([this.lifetime.signal, budget, ...(options.signal ? [options.signal] : [])]);
+    const operation: Operation = { signal, budget, deadline: performance.now() + timeoutMs, timeoutMs };
+    if (signal.aborted) throw this.failure(signal.reason, operation);
     pageLeases.set(this.page,this); this.leasedPages.add(this.page);
     this.nativeBrowser.operate(true);
     const task = Promise.resolve().then(() => fn(operation));
     this.active = task;
-    try { const result = await task; signal.throwIfAborted(); return result; }
+    // A settled result is returned even if the deadline passed meanwhile, so an executed action is never reported as cancelled.
+    try { return await settle(task, signal); }
+    catch (error) { throw this.failure(error, operation); }
     finally { this.nativeBrowser.operate(false); if (this.active === task) this.active = undefined; for(const page of this.leasedPages)if(pageLeases.get(page)===this)pageLeases.delete(page);this.leasedPages.clear(); }
+  }
+  /** Tell an exhausted budget from caller cancellation or close; nothing is retryable after an effect started. */
+  private failure(error: unknown, operation: Operation): BrowserError {
+    const { signal, budget } = operation, effect = operation.effect === true;
+    const closed = signal.aborted && signal.reason === this.lifetime.signal.reason;
+    const timedOut = signal.aborted ? !closed && (signal.reason as Error | undefined)?.name === 'TimeoutError' : error instanceof Error && error.name === 'TimeoutError';
+    // A specific cause (including a covering element that outlasted the budget) wins over a generic timeout or cancellation.
+    let specific: BrowserError | undefined;
+    if (error instanceof BrowserError) specific = error.code === 'CANCELLED' && timedOut ? undefined : error;
+    else if (timedOut) specific = obscuredTarget(error);
+    else if (!signal.aborted) { const mapped = browserError(error); specific = mapped.code === 'CANCELLED' ? undefined : mapped; }
+    if (specific) { if (effect) specific.retryable = false; return specific; }
+    const note = effect ? ' An action had started and may have changed the page; inspect state before trying again.' : ' No browser action was started.';
+    const line = error === signal.reason ? undefined : diagnostic(error), cause = line ? ` Cause: ${line}` : '';
+    const mapped = !timedOut ? new BrowserError('CANCELLED', `${closed ? 'The browser session closed during the operation.' : 'The caller cancelled the operation.'}${note}`, { cause: error })
+      : new BrowserError('TIMEOUT', `${!signal.aborted || signal.reason === budget.reason ? `The operation exceeded its ${operation.timeoutMs} ms timeout.` : 'The caller\'s timeout signal ended the operation.'}${note}${cause}`, { cause: error, retryable: !effect });
+    if (error instanceof BrowserError) { if (error.partial) mapped.partial = error.partial; if (error.semantic) mapped.semantic = error.semantic; }
+    return mapped;
   }
   private async invalidatePlan(): Promise<void> {
     const previous = this.pending; this.pending = undefined;
@@ -205,7 +243,7 @@ export class JevBrowser {
   async snapshot(options: OperationOptions = {}): Promise<Snapshot> {
     return this.exclusive(options, async operation => {
       await this.invalidate(); operation.signal.throwIfAborted();
-      const observed = await capture(this.page, { ...this.limits, scope: options.scope });
+      const observed = await capture(this.page, { ...this.limits, scope: options.scope, signal: operation.signal });
       try { operation.signal.throwIfAborted(); this.snapshotCapture = observed; return observed.data; }
       catch (error) { await observed.dispose(); throw error; }
     });
@@ -220,13 +258,13 @@ export class JevBrowser {
     const tasks=[...descriptions];
     return this.exclusive(options,async operation=>{
       await this.invalidate();operation.signal.throwIfAborted();
-      const observed=await capture(this.page,{...this.limits,scope:options.scope});
+      const observed=await capture(this.page,{...this.limits,scope:options.scope,signal:operation.signal});
       let retained=false;
       try{
         const {targets}=await locateSemanticTargets(observed.data,tasks,this.engine(),operation.signal,threshold);
         await Promise.all(targets.map(async target=>{
           const ref=observed.refs.get(target.ref)!;
-          await verifyTarget(ref);
+          await verifyTarget(ref,operation.signal);
           if(!await semanticWithinScope(ref,options.scope))throw new BrowserError('SEMANTIC_NO_MATCH','The discovered semantic target left the caller scope during inference.');
         }));
         operation.signal.throwIfAborted();
@@ -257,7 +295,7 @@ export class JevBrowser {
       throw new BrowserError('STALE_TARGET','The semantic target ref is expired or belongs to another observation.');
     const ref = captured.refs.get(id);
     if (!ref) throw new BrowserError('STALE_TARGET','The semantic target ref is not present in the current observation.');
-    await verifyTarget(ref);
+    await verifyTarget(ref,operation.signal);
     if(!await semanticWithinScope(ref,scope))throw new BrowserError('SEMANTIC_NO_MATCH','The captured semantic ref is outside the explicit caller scope.');
     const semantic = 'snapshotId' in actual;
     const confidence = semantic ? actual.confidence : 1;
@@ -292,7 +330,7 @@ export class JevBrowser {
         work.push({ ...actual, expected: request.expected, threshold: thresholds[index]!, sourceThreshold: sourceThresholds[index]! });
       }
       const needsObservation = work.some(item => !item.evidence);
-      const observed = needsObservation ? await capture(this.page,{...this.limits,scope:options.scope,semanticRefs:live}) : undefined;
+      const observed = needsObservation ? await capture(this.page,{...this.limits,scope:options.scope,semanticRefs:live,signal:operation.signal}) : undefined;
       const observationMs = performance.now()-observationStarted;
       try {
         operation.signal.throwIfAborted();
@@ -360,7 +398,7 @@ export class JevBrowser {
   async extract<S extends z.ZodType>(instruction: string, schema: S, options: ExtractOptions = {}): Promise<ExtractResult<z.output<S>>> {
     return this.exclusive(options, async operation => {
       await this.invalidate(); operation.signal.throwIfAborted();
-      const observed = await capture(this.page, { ...this.limits, scope: options.scope, recordsScope: options.recordsScope });
+      const observed = await capture(this.page, { ...this.limits, scope: options.scope, recordsScope: options.recordsScope, signal: operation.signal });
       try { return await extractStructured(observed.data, instruction, schema, () => this.engine(), operation.signal, this.limits.maxCandidates); }
       finally { await observed.dispose(); }
     });
@@ -397,9 +435,9 @@ export class JevBrowser {
     let resolutions=structuredClone(seed.resolutions??[]);
     let result:RunResult, failure:BrowserError|undefined;
     try {result=await runGoal({
-      page: () => this.page, capture: () => capture(this.page,{...this.limits,scope:options.scope}),
+      page: () => this.page, capture: () => capture(this.page,{...this.limits,scope:options.scope,signal:operation.signal}),
       regions: () => captureRegions(this.page),
-      captureRegion: ref => capture(this.page,{...this.limits,selection:{frame:ref.frame,roots:[ref.handle]}}),
+      captureRegion: ref => capture(this.page,{...this.limits,selection:{frame:ref.frame,roots:[ref.handle]},signal:operation.signal}),
       captureChoice: (ref,value) => captureComboboxChoice(this.page,ref,value,this.limits,{signal:operation.signal,timeoutMs:Math.min(this.remaining(operation),options.settleTimeoutMs??2000)}),
       engine: () => this.engine(), operation: () => ({signal:operation.signal,timeoutMs:this.remaining(operation)}),
       perform: (plan,observed,values,started) => this.executeCaptured(plan,observed,values,operation,started),
@@ -460,7 +498,7 @@ export class JevBrowser {
     const runOptions:RunOptions={...state.options,values,...(options.scope!==undefined?{scope:options.scope}:{}),...(options.timeoutMs!==undefined?{timeoutMs:options.timeoutMs}:{}),...(options.signal?{signal:options.signal}:{})};
     return this.exclusive({...options,timeoutMs:options.timeoutMs??state.options.timeoutMs??this.options.timeoutMs??60_000},async operation=>{
       if(state.carried){
-        const observed=await capture(this.page,{...this.limits,scope:state.options.scope});
+        const observed=await capture(this.page,{...this.limits,scope:state.options.scope,signal:operation.signal});
         try{if(state.carried.context!==JSON.stringify([observed.rawURL,observed.changeKeys]))
           throw new BrowserError('CONTINUATION_CONTEXT_CHANGED','The paused wizard view changed; carried input cannot be reused.');}
         finally{await observed.dispose();}
@@ -473,7 +511,7 @@ export class JevBrowser {
     await this.invalidate(); operation.signal.throwIfAborted();
     const { values, inputs } = inputBindings(instruction, options.values);
     if (Object.values(values).some(value => typeof value !== 'string')) throw new BrowserError('INVALID_ARGUMENT', 'Named input values must be strings.');
-    const observed = await capture(this.page, { ...this.limits, scope: options.scope });
+    const observed = await capture(this.page, { ...this.limits, scope: options.scope, signal: operation.signal });
     let retained = false;
     try {
       if (observed.data.truncatedElements) throw new BrowserError('OBSERVATION_LIMIT', 'Action observation was truncated. Narrow scope or raise maxElements.');
@@ -530,7 +568,7 @@ export class JevBrowser {
     const action=plan.action, ref=action.target?captured.refs.get(action.target.id):undefined;
     if(action.deferred)throw new BrowserError('UNRESOLVED_ACTION','A deferred option choice cannot be executed.');
     if(action.target&&!ref)throw new BrowserError('STALE_TARGET','The observed target is no longer available.');
-    if(ref)await verifyTarget(ref);
+    if(ref)await verifyTarget(ref,operation.signal);
     const target=action.target?{ref:action.target.id,element:action.target.name,frame:action.target.frame}:{};
     let command: NativeCommand;
     switch(action.kind){
@@ -548,14 +586,14 @@ export class JevBrowser {
     if(this.options.allowCommand && await this.options.allowCommand(structuredClone(parsed),op())!==true)
       throw new BrowserError('ACTION_DENIED','The caller policy denied this action.');
     operation.signal.throwIfAborted();
-    if(ref)await verifyTarget(ref);
+    if(ref)await verifyTarget(ref,operation.signal);
     if(action.ownerId){
       const owner=captured.refs.get(action.ownerId);if(!owner||!ref)throw new BrowserError('STALE_TARGET','The observed option owner is no longer available.');
       await verifyOwnedOption(owner,ref);
     }
     operation.signal.throwIfAborted();
     if(action.kind==='dialog' && !this.nativeBrowser.isCurrentDialog(action.dialog!))throw new BrowserError('STALE_DIALOG','The dialog changed during authorization; nothing was accepted.');
-    started();
+    operation.effect=true;started();
     try{
       const outcome=action.kind==='dialog'
         ? await this.nativeBrowser.execute(parsed,op())
@@ -563,21 +601,27 @@ export class JevBrowser {
         ? await this.nativeBrowser.action(()=>this.page.evaluate(top=>window.scrollBy({top,behavior:'instant'}),captured.data.scroll.height*(action.direction==='down'?0.8:-0.8)))
         : await this.nativeBrowser.executeResolved(parsed,ref!.handle,op());
       if(outcome.status==='dialog')return {status:'dialog',dialog:outcome.dialog as ActResult['dialog'],plan:structuredClone(plan),url:publicURL(this.page.url())};
-    }catch{
-      if(operation.signal.aborted)throw new BrowserError('ACTION_INTERRUPTED','Execution was interrupted. It may have had side effects; inspect state before trying again.');
-      throw new BrowserError('ACTION_FAILED','Action did not finish normally; it may have changed the page. Inspect state before trying again. No automatic retry occurred.');
+    }catch(error){
+      const cancelled=operation.signal.aborted&&(operation.signal.reason as Error|undefined)?.name!=='TimeoutError',obscured=obscuredTarget(error);
+      if(obscured&&!cancelled)throw obscured;
+      const line=diagnostic(error),cause=line?` Cause: ${line}`:'';
+      if(operation.signal.aborted)throw new BrowserError('ACTION_INTERRUPTED',`Execution was interrupted. It may have had side effects; inspect state before trying again.${cause}`,{cause:error});
+      throw new BrowserError('ACTION_FAILED',`Action did not finish normally; it may have changed the page. Inspect state before trying again. No automatic retry occurred.${cause}`,{cause:error});
     }
-    if(operation.signal.aborted)throw new BrowserError('ACTION_INTERRUPTED','Cancellation arrived during execution; inspect state before trying again.');
+    // The action finished, so it is reported as executed even if cancellation arrived meanwhile.
     return {status:'executed',plan:structuredClone(plan),url:publicURL(this.page.url())};
   }
   async close(): Promise<void> {
     return this.closePromise ??= (async () => {
       this.closed = true;
       this.lifetime.abort();
-      // Dismiss our pending dialog before draining the action it is blocking.
-      await this.nativeBrowser.dispose();
-      await this.active?.catch(() => undefined);
-      await this.invalidate();
+      // Dismiss our pending dialog before draining the action it is blocking. Work stuck in a hung
+      // renderer gets a bounded grace; owned resources are closed anyway, borrowed ones never.
+      await within((async () => {
+        await this.nativeBrowser.dispose();
+        await this.active?.catch(() => undefined);
+        await this.invalidate();
+      })(), SETTLE_GRACE_MS);
       this.continuations.clear();
       this.screenController?.close();
       await this.ownedCleanup?.();
