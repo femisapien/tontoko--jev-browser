@@ -55,6 +55,13 @@ const hostedOrigin = 'https://api.typesafe.ai';
 export const setting = (value: string | undefined) => value?.trim() || undefined;
 export const loopback = (host: string) => host === 'localhost' || host === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(host);
 
+/** Hosted Jev answers an over-long request with HTTP 400 `{"detail":{"error_type":"max_tokens_exceeded"}}`. */
+const tokenLimitRejection = (error: unknown): boolean => {
+  const body = typeof error === 'object' && error !== null && 'body' in error ? error.body : undefined;
+  const detail = typeof body === 'object' && body !== null && 'detail' in body ? body.detail : undefined;
+  return typeof detail === 'object' && detail !== null && 'error_type' in detail && detail.error_type === 'max_tokens_exceeded';
+};
+
 export class JevDecisionEngine implements DecisionEngine {
   private readonly client: TypeSafeClient;
   constructor(options: JevOptions = {}) {
@@ -86,6 +93,9 @@ export class JevDecisionEngine implements DecisionEngine {
     } catch (error) {
       if (options.signal?.aborted) throw new BrowserError('CANCELLED', 'Jev decision cancelled.', { cause: error });
       const status = typeof error === 'object' && error !== null && 'status' in error && typeof error.status === 'number' ? error.status : undefined;
+      // Hosted Jev limits input tokens, not bytes, so a request under DECISION_REQUEST_BYTES can still be too large.
+      if (status === 400 && tokenLimitRejection(error))
+        throw new BrowserError('OBSERVATION_LIMIT', 'The decision request exceeds the Jev input token limit; no browser action was retried. Narrow scope or exclude, or lower maxElements/maxTexts/maxCandidates.', { cause: error });
       // Transport failures, 408, 429 and 5xx may succeed unchanged; the core clears this once a browser effect started.
       throw new BrowserError('PROVIDER_ERROR', `Jev request failed${status === undefined ? '' : ` (HTTP ${status})`}; no browser action was retried.`, { cause: error, retryable: status === undefined || status === 408 || status === 429 || status >= 500 });
     }
