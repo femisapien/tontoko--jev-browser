@@ -4,7 +4,6 @@ import {createHash} from 'node:crypto';
 import {mkdtemp,readFile,readdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {setTimeout as delay} from 'node:timers/promises';
 import {JevBrowser} from '../dist/index.js';
 import {parseCommand,executeCommand} from '../dist/commands.js';
 import {fixtureBrowser,httpServer} from './helpers.mjs';
@@ -205,19 +204,21 @@ test('screen-only sessions report a native dialog or popup tab once, then recove
  const cases=[
   ['dialog from input','alert("PRIVATE_NATIVE_DIALOG");confirm("PRIVATE_SECOND_DIALOG");document.querySelector("h1").textContent="Resumed"','SCREEN_DIALOG_UNSUPPORTED',true],
   ['popup from input','window.open("'+server.url+'")','SCREEN_POPUP_UNSUPPORTED',true],
-  ['dialog between operations','setTimeout(()=>alert("PRIVATE_LATE_DIALOG"),50)','SCREEN_DIALOG_UNSUPPORTED',false],
-  ['popup between operations','setTimeout(()=>window.open("'+server.url+'"),50)','SCREEN_POPUP_UNSUPPORTED',false],
+  ['dialog between operations','setTimeout(()=>alert("PRIVATE_LATE_DIALOG"))','SCREEN_DIALOG_UNSUPPORTED',false],
+  ['popup between operations','setTimeout(()=>window.open("'+server.url+'"))','SCREEN_POPUP_UNSUPPORTED',false],
  ];
  for(const [name,script,code,immediate] of cases)await t.test(name,async t=>{
   const {core,page,context}=await fixture(t,{screenOnly:true,captureDialogs:true});
-  await page.locator('button').evaluate((button,script)=>button.setAttribute('onclick',script),script);
+  if(immediate)await page.locator('button').evaluate((button,script)=>button.setAttribute('onclick',script),script);
   let seen=await core.screen({action:'look'});
   const check=error=>{assert.equal(error.code,code);assert.equal(error.message.includes('PRIVATE_'),false);return true;};
   if(immediate)await assert.rejects(core.screen({action:'click',x:70,y:100,observationId:seen.observationId}),check);
   else{
+   // The page opens it after the operation returned, so the next screen call must report it before any input.
    seen=await core.screen({action:'click',x:70,y:100,observationId:seen.observationId});
-   if(code==='SCREEN_POPUP_UNSUPPORTED')await context.waitForEvent('page');else await delay(300);
-   await assert.rejects(core.screen({action:'look'}),check);
+   await Promise.all([code==='SCREEN_POPUP_UNSUPPORTED'?context.waitForEvent('page'):page.waitForEvent('dialog'),page.evaluate(script)]);
+   await assert.rejects(core.screen({action:'click',x:60,y:35,observationId:seen.observationId}),check);
+   assert.notEqual(await page.evaluate(()=>document.activeElement?.tagName),'INPUT','the report comes before the input');
   }
   // Reported once: later observations continue on the same selected page with no pending dialog or extra tab.
   seen=await core.screen({action:'look'});seen=await core.screen({action:'look'});
@@ -236,7 +237,7 @@ test('sessions with ordinary tools keep dialogs and popup tabs for those tools',
  assert.equal(context.pages().length,2);
  await assert.rejects(core.screen({action:'look'}),{code:'SCREEN_POPUP_UNSUPPORTED'});
  await context.pages()[1].close();
- await page.evaluate(()=>{setTimeout(()=>alert('PRIVATE_DIALOG'),0);});await delay(200);
+ await Promise.all([page.waitForEvent('dialog'),page.evaluate(()=>{setTimeout(()=>alert('PRIVATE_DIALOG'));})]);
  await assert.rejects(core.screen({action:'look'}),{code:'DIALOG_PENDING'});
  await executeCommand(core,parseCommand({command:'handle_dialog',accept:false}));
  await core.screen({action:'look'});
