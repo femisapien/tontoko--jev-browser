@@ -61,7 +61,7 @@ test('an explicit MCP timeoutMs includes time spent waiting behind an earlier ca
   await arrival;
   const queued = await client.callTool({ name: 'browser_resume', arguments: { continuationId: 'never-started', timeoutMs: 100 } });
   assert.equal(queued.isError, true);
-  assert.equal(error(queued).code, 'CANCELLED', 'the call timed out while waiting, without running');
+  assert.equal(error(queued).code, 'TIMEOUT', 'the call timed out while waiting, without running');
   assert.equal(engine.calls.length, 1);
   engine.calls[0].release();
   assert.notEqual((await observe).isError, true);
