@@ -59,18 +59,26 @@ test('MCP integer fields stay within the timer range and oversized values fail b
   assert.equal(state.starts, 0);
 });
 
-test('browser_select_option describes the value-or-label matching Playwright performs', async t => {
+test('browser_select_option matches value or label by default and exact values with by value', async t => {
   const browser = await fixtureBrowser(); const context = await browser.newContext(); const page = await context.newPage(); const core = new JevBrowser({ page });
   t.after(async () => { await core.close(); await context.close(); await browser.close(); });
   await page.setContent('<select id=q><option value="2">1</option><option value="1">2</option><option value="b">Banana</option></select>');
   const { client, tools } = await connect(t, core);
   const { properties } = tools.find(tool => tool.name === 'browser_select_option').inputSchema;
-  for (const name of ['values', 'by']) assert.match(properties[name].description, /value or label/);
+  assert.match(properties.values.description, /value or label/);
+  assert.match(properties.by.description, /value matches option values exactly/);
   assert.match(properties.by.description, /label matches labels only/);
+  assert.match(properties.by.description, /TIMEOUT/);
   const selected = async args => { const result = await client.callTool({ name: 'browser_select_option', arguments: { target: '#q', ...args } }); assert.notEqual(result.isError, true); return page.$eval('#q', select => select.value); };
-  // Raw strings match the first option whose value or label is equal; only by label narrows the match.
-  assert.equal(await selected({ values: ['1'], by: 'value' }), '2');
+  // Without by, a string matches the first option whose value or label is equal.
+  assert.equal(await selected({ values: ['1'] }), '2');
   assert.equal(await selected({ values: ['Banana'] }), 'b');
+  // by value matches values only; by label matches labels only.
+  assert.equal(await selected({ values: ['1'], by: 'value' }), '1');
+  assert.equal(await selected({ values: ['2'], by: 'value' }), '2');
   assert.equal(await selected({ values: ['1'], by: 'label' }), '2');
   assert.equal(await selected({ values: ['2'], by: 'label' }), '1');
+  // A label is not a value: Playwright waits for a matching option until the operation budget ends.
+  await assert.rejects(core.native({ command: 'select_option', target: '#q', values: ['Banana'], by: 'value' }, { timeoutMs: 500 }), error => error.code === 'TIMEOUT');
+  assert.equal(await page.$eval('#q', select => select.value), '1', 'the previous selection is kept');
 });

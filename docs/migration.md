@@ -195,3 +195,31 @@ which `playwright-core` added in 1.62; `z.fromJSONSchema` needs Zod 4.2.
   (your) `playwright-core`, the same one `npx playwright install` installs.
 - Import Playwright APIs in your own code from your own `playwright`,
   `playwright-core` or `@playwright/test`; this package never provided them.
+
+## Strict select values and fixed session options (next release)
+
+Native `select_option` with `by: 'value'` matches option values exactly. Earlier
+releases passed the strings to Playwright unchanged, so `by: 'value'` also
+matched an option whose label equalled the string. Omit `by` to keep the old
+value-or-label matching, or pass `by: 'label'` to match labels only. As before,
+a string that matches no option makes Playwright wait for one, so the call fails
+with `TIMEOUT` when the operation budget ends; pass a shorter `timeoutMs` when
+an option may be missing.
+
+A named CLI session fixes its launch options when it starts. `open --session NAME`
+for a session that is already running now fails with `SESSION_MODE_MISMATCH` if
+the launch options differ, where earlier releases reused the session and ignored
+the new options. Launch options are every flag and `--options-file` field that
+configures the browser or core, such as `--browser`, `--headed`, `--viewport`,
+`--locale`, `--storage-state`, `--user-data-dir`, `--cdp-endpoint`,
+`--timeout-ms`, `--max-elements`, `--file-root` and `--allow-evaluate`; the URL
+and `--idle-timeout-ms` are not. Repeat the original options to reuse the
+session, or `close --session NAME` and open it again. Commands other than
+`open`, such as `snapshot --session NAME`, are unaffected.
+
+`JevBrowser.launch()` with `cdpEndpoint` or `wsEndpoint` borrows the attached
+browser's first existing context. Playwright cannot apply `contextOptions` or
+`storageState` to that context, and earlier releases ignored them silently. They
+now fail with `CONFIG`. Remove them when attaching to a browser that already has
+a context, or launch a new browser instead. When the attached browser has no
+context, Jev still creates one with those options.
