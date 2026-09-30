@@ -162,11 +162,44 @@ for(const screenOnly of [false,true])test('a native dialog that interrupts a cap
  await page.goto(s.url);
  await page.evaluate(url=>{const face=new FontFace('held',`url("${url}/held.woff2")`);document.fonts.add(face);document.body.style.fontFamily='held';void face.load().catch(()=>{});},s.url);
  const held=await font;
- const pending=core.screen({action:'look'},{timeoutMs:1000}).catch(error=>error);
- await page.evaluate(()=>{setTimeout(()=>alert('PRIVATE_DIALOG'));});
- const error=await pending;
+ // The dialog opens once the capture's screenshot has started, never before the operation's own pre-checks.
+ const screenshot=page.screenshot.bind(page);let opened=false;
+ page.screenshot=options=>{const shot=screenshot(options);if(!opened){opened=true;void page.evaluate(()=>{setTimeout(()=>alert('PRIVATE_DIALOG'));});}return shot;};
+ const error=await core.screen({action:'look'},{timeoutMs:1000}).catch(error=>error);
  assert.equal(error.code,'SCREEN_FAILED');assert.deepEqual(error.details,{reason:'dialog'});assert.equal(error.message.includes('PRIVATE_'),false);
  if(screenOnly){held.statusCode=404;held.end();assert.equal((await core.screen({action:'look'})).frames.length,1);}
+});
+// Playwright's screenshot timeout and the operation budget expire together; either may fire first. A dialog that opened
+// during the capture is the reason it failed, so the capture is not retaken and the dialog is reported once in one shape.
+test('a capture timeout while a dialog is open reports the dialog once, whichever timer fires first',async t=>{
+ for(const screenOnly of [false,true])await t.test(screenOnly?'screen-only':'with dialog tools',async t=>{
+  const {core,page}=await fixture(t,{screenOnly});
+  const screenshot=page.screenshot.bind(page);let calls=0;
+  page.screenshot=async options=>{
+   calls++;if(calls>1)return screenshot(options);
+   const shown=page.waitForEvent('dialog');await page.evaluate(()=>{setTimeout(()=>alert('PRIVATE_DIALOG'));});await shown;
+   throw Object.assign(new Error('page.screenshot: Timeout exceeded.'),{name:'TimeoutError'});
+  };
+  const error=await core.screen({action:'look'}).catch(error=>error);
+  assert.equal(error.code,'SCREEN_FAILED');assert.deepEqual(error.details,{reason:'dialog'});assert.equal(error.message.includes('PRIVATE_'),false);
+  assert.equal(calls,1,'the capture is not retaken');
+  if(screenOnly){assert.equal((await core.screen({action:'look'})).frames.length,1);assert.equal(calls,2);}
+  else await assert.rejects(core.screen({action:'look'}),{code:'DIALOG_PENDING'});
+ });
+});
+// A screenshot can also complete while a dialog that opened during the capture is still open.
+test('a dialog that opens while a screen-only capture completes fails that capture with reason dialog, then is dismissed',async t=>{
+ const {core,page}=await fixture(t,{screenOnly:true});
+ const screenshot=page.screenshot.bind(page);let calls=0;
+ page.screenshot=async options=>{
+  const shot=await screenshot(options);calls++;
+  if(calls===1){const shown=page.waitForEvent('dialog');await page.evaluate(()=>{setTimeout(()=>alert('PRIVATE_DIALOG'));});await shown;}
+  return shot;
+ };
+ const error=await core.screen({action:'look'}).catch(error=>error);
+ assert.equal(error.code,'SCREEN_FAILED');assert.deepEqual(error.details,{reason:'dialog'});assert.equal(error.message.includes('PRIVATE_'),false);
+ assert.equal(calls,1,'the capture is not retaken');
+ assert.equal((await core.screen({action:'look'})).frames.length,1);
 });
 test('screen mode rejects ordinary dispatcher commands and does not change normal mode',async t=>{
  const {core}=await fixture(t,{screenOnly:true});
