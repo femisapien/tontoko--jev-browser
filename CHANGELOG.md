@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.14.1
 
 - A decision request that hosted Jev rejects as over its input token limit (HTTP 400 `max_tokens_exceeded`, which dense pages reach below the 128 KiB byte budget) now fails with non-retryable `OBSERVATION_LIMIT` and narrowing guidance instead of `PROVIDER_ERROR`, from `act`, `observe`, `run`, `extract` and semantic operations.
 
