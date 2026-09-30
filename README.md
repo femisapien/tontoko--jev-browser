@@ -144,7 +144,7 @@ After installing the tarball, configure your MCP client:
 
 The environment entry is unnecessary for native operations. Prefer your client's secret store over putting real keys into committed JSON. Browser launch is lazy: tool discovery does not start a browser.
 
-`browser_snapshot` provides refs for `browser_click`, `browser_type`, and other native tools. `browser_act`, `browser_observe`, `browser_extract`, and `browser_run` use the **same core** as the SDK. Native `browser_assert` verifies facts without asking a model. Tools also cover tabs, frames, dialogs, uploads/downloads, screenshots, PDF, mouse/keyboard, storage, cookies, routing, traces, console messages, and request metadata.
+`browser_snapshot` provides refs for `browser_click`, `browser_type`, and other native tools. `browser_act`, `browser_observe`, `browser_extract`, and `browser_run` use the **same core** as the SDK. Native `browser_assert` verifies facts without asking a model. Tools also cover tabs, frames, dialogs, uploads/downloads, screenshots, PDF, mouse/keyboard, storage, cookies, routing, traces, console messages, and request metadata. Console messages, request metadata and downloads are reported for the selected tab unless `allTabs` is set; each entry carries a `pageId` that matches `browser_tabs`, and a download keeps a stable `id` for saving or cancelling it.
 
 ## SDK: existing Playwright Page and assertions
 
@@ -174,6 +174,8 @@ test('save a name', async ({ page }) => {
 ```
 
 `JevBrowser.launch()` owns its resources. Chromium, Firefox, WebKit, persistent profiles, CDP, and Playwright WebSocket connections are supported. The SDK exposes `browser.page`, so native Playwright assertions, locators, fixtures and application-specific verification remain available.
+
+A borrowed Page keeps Playwright's default dialog handling outside Jev operations. Jev holds an `alert`, `confirm` or `prompt` only while one of its own operations runs, and returns it as a pending `dialog` for `handle_dialog`. Your own `page.click()` on a button that opens `confirm()` is dismissed by Playwright as usual and does not block later Jev operations. Pass `captureDialogs: true` to also hold dialogs that open between operations; `JevBrowser.launch()`, the CLI and the MCP server do this by default.
 
 ### Semantic locate and confidence-aware assertions
 

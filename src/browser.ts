@@ -103,7 +103,7 @@ export class JevBrowser {
     const contextOptions = { ...options.contextOptions, ...(options.storageState ? { storageState: options.storageState } : {}) };
     if (options.userDataDir) {
       const context = await type.launchPersistentContext(options.userDataDir, { ...contextOptions, headless: options.headless ?? true, ...options.launchOptions });
-      try { const core = new JevBrowser({ ...options, page: context.pages()[0] ?? await context.newPage() }); core.ownedCleanup = () => context.close(); return core; }
+      try { const core = new JevBrowser({ ...options, captureDialogs: options.captureDialogs ?? true, page: context.pages()[0] ?? await context.newPage() }); core.ownedCleanup = () => context.close(); return core; }
       catch (error) { await context.close(); throw error; }
     }
     const browser = options.cdpEndpoint ? await chromium.connectOverCDP(options.cdpEndpoint)
@@ -113,7 +113,7 @@ export class JevBrowser {
       const attached = !!(options.cdpEndpoint || options.wsEndpoint);
       const context = attached && browser.contexts()[0] || await browser.newContext(contextOptions);
       const page = attached && context.pages()[0] || await context.newPage();
-      const core = new JevBrowser({ ...options, page });
+      const core = new JevBrowser({ ...options, captureDialogs: options.captureDialogs ?? true, page });
       // Playwright disconnects a connected Browser; borrowed remote pages are not individually closed.
       core.ownedCleanup = () => browser.close();
       return core;
@@ -182,10 +182,11 @@ export class JevBrowser {
     const operation = { signal, deadline: performance.now() + timeoutMs };
     signal.throwIfAborted();
     pageLeases.set(this.page,this); this.leasedPages.add(this.page);
+    this.nativeBrowser.operate(true);
     const task = Promise.resolve().then(() => fn(operation));
     this.active = task;
     try { const result = await task; signal.throwIfAborted(); return result; }
-    finally { if (this.active === task) this.active = undefined; for(const page of this.leasedPages)if(pageLeases.get(page)===this)pageLeases.delete(page);this.leasedPages.clear(); }
+    finally { this.nativeBrowser.operate(false); if (this.active === task) this.active = undefined; for(const page of this.leasedPages)if(pageLeases.get(page)===this)pageLeases.delete(page);this.leasedPages.clear(); }
   }
   private async invalidatePlan(): Promise<void> {
     const previous = this.pending; this.pending = undefined;

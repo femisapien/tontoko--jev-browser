@@ -9,6 +9,7 @@ const dimension = z.number().int().min(1).max(16384);
 const index = z.number().int().nonnegative();
 const filename = z.string().min(1).optional();
 const text = z.string();
+const allTabs = z.boolean().optional();
 const target = z.object(targetFields).strict().refine(targetRequired, targetMessage);
 export const nativeSchemas = {
   navigate: z.object({ url: z.string().min(1) }).strict(),
@@ -26,12 +27,12 @@ export const nativeSchemas = {
   frames: z.object({}).strict(),
   handle_dialog: z.object({ accept: z.boolean(), promptText: z.string().optional() }).strict(),
   file_upload: z.object({ ...targetFields, paths: z.array(z.string()) }).strict(),
-  downloads: z.object({ action: z.enum(['list', 'save', 'cancel']), index: index.optional(), filename }).strict().refine(v => v.action === 'list' || v.index !== undefined, { message: 'A download index is required.' }),
+  downloads: z.object({ action: z.enum(['list', 'save', 'cancel']), index: index.optional(), id: z.number().int().positive().optional(), allTabs, filename }).strict().refine(v => v.action === 'list' || Number(v.index !== undefined) + Number(v.id !== undefined) === 1, { message: 'Provide exactly one download id or index.' }).refine(v => v.action === 'list' || v.allTabs === undefined, { message: 'allTabs applies only to list.' }),
   take_screenshot: z.object({ ...targetFields, filename, fullPage: z.boolean().optional(), type: z.enum(['png', 'jpeg']).default('png') }).strict(),
   pdf: z.object({ filename, format: z.enum(['A4', 'Letter', 'Legal', 'A3', 'A5']).default('A4'), printBackground: z.boolean().optional() }).strict(),
   resize: z.object({ width: dimension, height: dimension }).strict(),
-  console_messages: z.object({ level: z.enum(['error', 'warning', 'info', 'debug']).optional(), clear: z.boolean().optional() }).strict(),
-  network_requests: z.object({ clear: z.boolean().optional() }).strict(),
+  console_messages: z.object({ level: z.enum(['error', 'warning', 'info', 'debug']).optional(), clear: z.boolean().optional(), allTabs }).strict(),
+  network_requests: z.object({ clear: z.boolean().optional(), allTabs }).strict(),
   evaluate: z.object({ function: z.string().min(1), arg: z.unknown().optional(), ...targetFields }).strict(),
   init_script: z.object({ script: z.string().min(1) }).strict(),
   storage: z.object({ area: z.enum(['local', 'session']), action: z.enum(['get', 'set', 'delete', 'clear', 'list']), name: z.string().optional(), value: z.string().optional() }).strict().refine(v => ['clear', 'list'].includes(v.action) || v.name !== undefined, { message: 'A storage name is required.' }).refine(v => v.action !== 'set' || v.value !== undefined, { message: 'set requires a value.' }),
