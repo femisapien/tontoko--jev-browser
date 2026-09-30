@@ -12,7 +12,7 @@ jev-browser screen --session visual --args '{"action":"look"}'
 jev-browser close --session visual
 ~~~
 
-For MCP, run jev-browser-mcp with --screen-only and --url. CLI and MCP setup can fix the browser context with --viewport, --reduced-motion, --color-scheme, --locale or --options-file. Discovery starts no browser and exposes only browser_screen and browser_close. Its first screen request starts the configured browser and performs the trusted initial navigation. Results carry actual MCP image blocks and separate metadata without base64 or local paths.
+For MCP, run jev-browser-mcp with --screen-only and --url. CLI and MCP setup can fix the browser context with --viewport, --reduced-motion, --color-scheme, --locale or --options-file. Discovery starts no browser and exposes only browser_screen and browser_close, plus browser_screen_decide when --vision-base-url and --vision-model configure opt-in [image understanding](image-understanding.md) for a text-only reviewer. Its first screen request starts the configured browser and performs the trusted initial navigation. Results carry actual MCP image blocks and separate metadata without base64 or local paths.
 
 Named sessions keep their mode for their lifetime. Reopening a normal session with --screen-only, or reopening a restricted session without that mode, fails before navigation. Restricted sessions cannot be reopened at another supplied URL. Individual commands cannot turn their mode off.
 

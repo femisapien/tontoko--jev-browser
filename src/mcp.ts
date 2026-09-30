@@ -11,12 +11,16 @@ import { screenToolSchema } from './screen-tool.js';
 /**
  * The caller owns the borrowed core, or its lazy factory's lifetime. Tool calls run one at a time, in arrival order.
  * `capabilities` lists the enabled opt-in tool groups; tools of other groups are not registered. Omitted, every tool is registered.
+ * `vision` (lazy factory only) registers browser_screen_decide; a started core reports its own `hasVision`.
  */
-export function createMcpServer(browser: JevBrowser | (() => Promise<JevBrowser>), options: { screenOnly?: boolean; capabilities?: readonly Capability[] } = {}): McpServer {
+export function createMcpServer(browser: JevBrowser | (() => Promise<JevBrowser>), options: { screenOnly?: boolean; capabilities?: readonly Capability[]; vision?: boolean } = {}): McpServer {
   const server = new McpServer({ name: 'jev-browser', version });
   const screenOnly = typeof browser === 'function' ? options.screenOnly === true : browser.screenOnly;
+  // browser_screen_decide is listed only when an image endpoint is configured; for a lazy factory, `vision` says so.
+  const vision = typeof browser === 'function' ? options.vision === true : browser.hasVision;
   let started = typeof browser !== 'function';
-  const names: CommandName[] = screenOnly ? ['screen', 'close'] : (Object.keys(commandSchemas) as CommandName[]).filter(name => capabilityEnabled(options.capabilities, name));
+  const names: CommandName[] = (screenOnly ? ['screen', 'screen_decide', 'close'] as CommandName[] : (Object.keys(commandSchemas) as CommandName[]).filter(name => capabilityEnabled(options.capabilities, name)))
+    .filter(name => name !== 'screen_decide' || vision);
   // The core is exclusive and answers BUSY; clients commonly send parallel calls, so they wait here instead.
   let queue = Promise.resolve();
   const serial = async <T>(signal: AbortSignal, task: () => Promise<T>): Promise<T> => {

@@ -13,6 +13,7 @@ import { flattenInputs } from './bindings.js';
 import { extractStructured } from './structured.js';
 import { NativeBrowser } from './native.js';
 import { ScreenController, screenDialogMessage, type ScreenRequest, type ScreenResult } from './screen.js';
+import { decideFromScreen, imageUnderstanding, validateVisualRequest, type ImageUnderstanding, type ScreenDecideRequest, type VisualDecisionResult } from './image-understanding.js';
 import { compareSemanticWork, elementEvidence, locateSemanticTargets, semanticThreshold } from './semantic.js';
 import { parseNative, nativeSchemas, nativeReadOnly, type NativeCommand } from './native-schemas.js';
 import type { ActionPlan, ActOptions, ActResult, BrowserOptions, BrowserLaunchOptions, ExtractResult, ExtractOptions, GoalCheckpoint, OperationOptions, ResumeOptions, RunOptions, RunResult, RunValue, Snapshot, SemanticEvidence, SemanticLocateOptions, SemanticTarget, SemanticActual, SemanticCompareOptions, SemanticComparisonRequest, SemanticComparisonResult } from './types.js';
@@ -90,6 +91,7 @@ export class JevBrowser {
   private readonly options: BrowserOptions;
   // #private: inspecting, logging or serializing the core cannot reveal the key.
   readonly #apiKey?: string;
+  readonly #vision?: ImageUnderstanding;
   private readonly timeoutMs: number;
   private readonly limits: { maxElements: number; maxTexts: number; maxCandidates: number };
   private readonly lifetime = new AbortController();
@@ -106,8 +108,10 @@ export class JevBrowser {
   constructor(options: BrowserOptions) {
     assertPlaywrightCore();
     this.currentPage = options.page;
-    const { apiKey, ...rest } = options;
+    const { apiKey, vision, ...rest } = options;
     this.options = rest; this.#apiKey = apiKey;
+    // Validated now, so a bad image endpoint fails at launch rather than at the first screenDecide.
+    if (vision !== undefined) this.#vision = imageUnderstanding(vision);
     this.engineInstance = options.engine;
     this.timeoutMs = positiveInteger(options.timeoutMs ?? 30_000, 'timeoutMs');
     this.limits = {
@@ -199,22 +203,40 @@ export class JevBrowser {
     await this.screenCore().deny(command);
   }
   async screen(request: ScreenRequest, options: OperationOptions = {}): Promise<ScreenResult> {
+    return this.exclusive(options, async operation => this.runScreen(request, options, operation), 'screen');
+  }
+  /** True when this core was given a `vision` endpoint or adapter for `screenDecide`. */
+  get hasVision(): boolean { return this.#vision !== undefined; }
+  /**
+   * Opt-in: capture the viewport once (a screen `look`), have the configured image endpoint describe it, and answer the
+   * caller's questions with the decision engine from that description. The engine never receives image bytes, and the
+   * image endpoint never receives the questions, context, DOM or URL. No input is sent; act with `screen` and the returned
+   * `evidence.observationId`, which is the current observation.
+   */
+  async screenDecide(request: ScreenDecideRequest, options: OperationOptions = {}): Promise<VisualDecisionResult> {
+    const vision = this.#vision;
+    if (!vision) throw new BrowserError('CONFIG', 'screenDecide needs an image-understanding endpoint. Pass the vision option (CLI/MCP: --vision-base-url and --vision-model).');
+    validateVisualRequest({ state: request?.state ?? {}, questions: request?.questions });
     return this.exclusive(options, async operation => {
-      if (options.scope !== undefined) throw new BrowserError('INVALID_ARGUMENT', 'Screen capture cannot use a DOM scope.');
-      if (viewKeys.some(key => options[key] !== undefined)) throw new BrowserError('INVALID_ARGUMENT', 'Screen capture cannot use DOM observation limits or exclusions.');
-      const context = () => ({ signal: operation.signal, timeoutMs: this.remaining(operation) });
-      try {
-        return await this.screenCore().execute(request, context,
-          this.options.allowCommand ? async (request, operation) => this.options.allowCommand!({ command: 'screen', request: structuredClone(request) }, operation) : undefined,
-          async action => {
-            operation.effect = true;
-            const result = await this.nativeBrowser.action(action);
-            if (result.status !== 'dialog') return;
-            if (this.screenOnly) await this.nativeBrowser.dismissDialogs();
-            throw new BrowserError('SCREEN_DIALOG_UNSUPPORTED', screenDialogMessage(this.screenOnly));
-          });
-      } finally { await this.invalidatePlan(); }
+      const screen = await this.runScreen({ action: 'look', ...(request.capture ? { capture: request.capture } : {}) }, options, operation);
+      return decideFromScreen(screen, { state: request.state ?? {}, questions: request.questions }, { understand: vision, engine: this.engine(), signal: operation.signal });
     }, 'screen');
+  }
+  private async runScreen(request: ScreenRequest, options: OperationOptions, operation: Operation): Promise<ScreenResult> {
+    if (options.scope !== undefined) throw new BrowserError('INVALID_ARGUMENT', 'Screen capture cannot use a DOM scope.');
+    if (viewKeys.some(key => options[key] !== undefined)) throw new BrowserError('INVALID_ARGUMENT', 'Screen capture cannot use DOM observation limits or exclusions.');
+    const context = () => ({ signal: operation.signal, timeoutMs: this.remaining(operation) });
+    try {
+      return await this.screenCore().execute(request, context,
+        this.options.allowCommand ? async (request, operation) => this.options.allowCommand!({ command: 'screen', request: structuredClone(request) }, operation) : undefined,
+        async action => {
+          operation.effect = true;
+          const result = await this.nativeBrowser.action(action);
+          if (result.status !== 'dialog') return;
+          if (this.screenOnly) await this.nativeBrowser.dismissDialogs();
+          throw new BrowserError('SCREEN_DIALOG_UNSUPPORTED', screenDialogMessage(this.screenOnly));
+        });
+    } finally { await this.invalidatePlan(); }
   }
   private engine(): DecisionEngine {
     return this.engineInstance ??= new JevDecisionEngine({ ...this.options, apiKey: this.#apiKey });

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Opt-in image understanding: `screenDecide` (CLI `screen_decide`, MCP `browser_screen_decide`, also in screen-only sessions) captures the viewport once, has an OpenAI-compatible Chat Completions endpoint you configure (`vision` option, or `--vision-base-url` and `--vision-model` with `JEV_VISION_API_KEY`) describe it, and answers your questions with Jev from that text; `decideFromScreen` and `ChatCompletionsImageUnderstanding` are exported for your own captures. Screenshots go only to that HTTPS or loopback endpoint, only when called, and no Jev key is sent to it.
+
 ## 0.13.0
 
 - Breaking: `playwright-core` (`>=1.62.0 <2`) and `zod` (`^4.2.0`) are now peer dependencies instead of bundled `playwright` and `zod` copies, so the package shares your project's Playwright and Zod; an older `playwright-core` fails with `CONFIG`. Yarn Berry users must add them explicitly. See `docs/migration.md`.

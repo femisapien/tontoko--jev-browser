@@ -10,7 +10,8 @@ import type { BrowserLaunchOptions, OperationContext } from './types.js';
 import { version } from './version.js';
 
 const required = (message: string) => ({ error: (issue: { input?: unknown }) => issue.input === undefined ? message : undefined });
-const capture = z.object({ frames: z.number().int().min(1).max(10), intervalMs: z.number().int().min(20).max(1000) }).strict().optional();
+export const captureSchema = z.object({ frames: z.number().int().min(1).max(10), intervalMs: z.number().int().min(20).max(1000) }).strict();
+const capture = captureSchema.optional();
 const observationId = z.string(required('Required for this action. Use the observationId from the latest screen result.')).min(1);
 const observed = { observationId, capture };
 const coordinate = () => z.number(required('Required for this action, in viewport image pixels.')).finite();

@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import type { JevBrowser } from './browser.js';
+import type { DecisionRequest } from './decision.js';
 import { BrowserError } from './errors.js';
 import { nativeSchemas, nativeReadOnly, type NativeCommand, type NativeName } from './native-schemas.js';
-import { invalidScreenRequest, screenSchema } from './screen.js';
+import { captureSchema, invalidScreenRequest, screenSchema } from './screen.js';
 
 // Node timers overflow above 2147483647 ms; the CLI applies the same bound to its integer options.
 const positiveInteger = z.number().int().positive().max(2_147_483_647);
@@ -28,10 +29,22 @@ const minSourceConfidence = confidence.describe('Required source-binding confide
 const semanticActual = z.union([z.object({ description: instruction.describe('Page value in words, bound to one observed source.') }).strict(), z.object({ ref: z.string().min(1).describe('Current snapshot or semantic_locate ref.') }).strict()]).describe('Actual page value: {description} or {ref}.');
 const expected = z.string().min(1).describe('Expected meaning in words. Sent to Jev unless an exact local match settles it.');
 const semanticRequest = z.object({ actual: semanticActual, expected, minConfidence, minSourceConfidence }).strict();
+const choiceQuestion = z.object({
+  instructions: instruction.describe('The question, answered from the image description and state.'),
+  criteria: z.record(z.string().min(1), z.string().min(1)).refine(value => Object.keys(value).length >= 2, { message: 'Provide at least two choices.' })
+    .describe('Choice id to its meaning; the answer is one of these ids. Include an insufficient-evidence choice where possible.'),
+}).strict();
+const nonEmpty = (value: object) => Object.keys(value).length > 0;
 const semanticBatch = z.object({ requests: z.array(semanticRequest).min(1).describe('Independent actual/expected pairs; item thresholds override the shared ones.'), minConfidence, minSourceConfidence, scope, timeoutMs, ...observation }).strict();
 export const commandSchemas = {
   ...nativeSchemas,
   screen: screenSchema,
+  screen_decide: z.object({
+    questions: z.record(z.string().min(1), choiceQuestion).refine(nonEmpty, { message: 'Provide at least one question.' }).describe('Independent questions, by id, answered from one shared description of the capture.'),
+    state: z.record(z.string(), z.json()).optional().describe('Caller context sent to the decision endpoint with the description. Never sent to the image endpoint.'),
+    capture: captureSchema.optional().describe('Optional frames 1-10 and intervalMs 20-1000 for a short frame sequence, as for screen look.'),
+    timeoutMs,
+  }).strict(),
   goto: z.object({ url: z.url().describe('Absolute HTTP(S) URL.') }).strict(),
   snapshot: z.object({ scope, ...observation }).strict(),
   observe: z.object({ instruction: instruction.describe('One action to plan, e.g. click Save.'), values, scope, ...observation }).strict(),
@@ -66,6 +79,7 @@ export type CommandName = keyof typeof commandSchemas;
 export type Command = { [K in CommandName]: { command: K } & z.output<(typeof commandSchemas)[K]> }[CommandName];
 const descriptions: Partial<Record<CommandName, string>> = {
   screen: 'Observe viewport pixels or send one physical input. Start with action look. click, move, drag, scroll, type, press, back, forward and reload require the latest observationId; field descriptions state each action\'s arguments. Rejected requests keep that observationId usable; after failed captures, back, forward or reload can recover without one. Returns fresh images, real timestamps and whether the main frame navigated, never DOM, selectors, labels or URL metadata.',
+  screen_decide: 'Opt-in, needs --vision-base-url and --vision-model. Capture the viewport once, have the configured image endpoint describe it, and answer the questions with Jev from that description only. Sends no input. Returns decision, the description with provenance, and evidence.observationId, which is the current screen observation. Descriptions can be wrong; never proof of a saved result.',
   goto: 'Navigate to an HTTP(S) URL. Alias for navigate.',
   navigate: 'Navigate the selected tab to an HTTP(S) URL.',
   snapshot: 'Read accessible controls and source text, with short-lived element references. Replaces earlier refs and any pending observe plan; the page is unchanged. No model call.',
@@ -100,7 +114,7 @@ const descriptions: Partial<Record<CommandName, string>> = {
 };
 export const commandDescriptions = Object.fromEntries(Object.keys(commandSchemas).map(name => [name, descriptions[name as CommandName] ?? `Execute native Playwright ${name.replaceAll('_', ' ')} on the selected browser session. No model call.`])) as Record<CommandName, string>;
 export function commandReadOnly(name: CommandName): boolean {
-  return ['snapshot', 'observe', 'extract', 'semantic_locate', 'semantic_locate_batch', 'semantic_compare', 'semantic_assert', 'semantic_compare_batch', 'semantic_assert_batch', 'screenshot'].includes(name) || nativeReadOnly.has(name as NativeName);
+  return ['screen_decide', 'snapshot', 'observe', 'extract', 'semantic_locate', 'semantic_locate_batch', 'semantic_compare', 'semantic_assert', 'semantic_compare_batch', 'semantic_assert_batch', 'screenshot'].includes(name) || nativeReadOnly.has(name as NativeName);
 }
 export function parseCommand(input: unknown): Command {
   if (typeof input !== 'object' || input === null || !('command' in input) || typeof input.command !== 'string' || !Object.hasOwn(commandSchemas, input.command))
@@ -112,7 +126,8 @@ export function parseCommand(input: unknown): Command {
   return { command: name, ...parsed.data } as Command;
 }
 export async function executeCommand(browser: JevBrowser, request: Command, signal?: AbortSignal): Promise<object> {
-  if (browser.screenOnly && request.command !== 'screen' && request.command !== 'close') {
+  // screen_decide reads only viewport pixels, so screen-only sessions allow it.
+  if (browser.screenOnly && request.command !== 'screen' && request.command !== 'screen_decide' && request.command !== 'close') {
     try { await browser.recordScreenDenied(request.command); } catch { /* Recording cannot authorize a forbidden command. */ }
     throw new BrowserError('SCREEN_ONLY', 'This session accepts only screen operations and close.');
   }
@@ -120,6 +135,7 @@ export async function executeCommand(browser: JevBrowser, request: Command, sign
     ...Object.fromEntries(observationKeys.flatMap(key => key in request && (request as Record<string, unknown>)[key] !== undefined ? [[key, (request as Record<string, unknown>)[key]]] : [])) };
   switch (request.command) {
     case 'screen': { const { command, ...screen } = request; return browser.screen(screen, { signal }); }
+    case 'screen_decide': return browser.screenDecide({ questions: Object.fromEntries(Object.entries(request.questions).map(([id, question]) => [id, { type: 'choice' as const, ...question }])), ...(request.state ? { state: request.state as DecisionRequest['state'] } : {}), ...(request.capture ? { capture: request.capture } : {}) }, { signal, timeoutMs: request.timeoutMs });
     case 'goto': return browser.goto(request.url, options);
     case 'snapshot': return browser.snapshot(options);
     case 'observe': return { plan: await browser.observe(request.instruction, options) };

@@ -32,8 +32,8 @@ const wireResult = z.object({
 });
 const hostedOrigin = 'https://api.typesafe.ai';
 /** Empty or whitespace-only settings are unset, matching `.env` files that leave a key blank. */
-const setting = (value: string | undefined) => value?.trim() || undefined;
-const loopback = (host: string) => host === 'localhost' || host === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(host);
+export const setting = (value: string | undefined) => value?.trim() || undefined;
+export const loopback = (host: string) => host === 'localhost' || host === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(host);
 
 export class JevDecisionEngine implements DecisionEngine {
   private readonly client: TypeSafeClient;

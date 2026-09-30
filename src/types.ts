@@ -1,6 +1,7 @@
 import type { Page, Locator, LaunchOptions, BrowserContextOptions } from 'playwright-core';
 import type { NativeCommand } from './native-schemas.js';
 import type { DecisionEngine, DecisionResult, JevOptions } from './decision.js';
+import type { ImageUnderstanding, ImageUnderstandingOptions } from './image-understanding.js';
 
 export interface ElementInfo {
   id: string;
@@ -156,6 +157,11 @@ export interface BrowserOptions extends JevOptions {
   screenOnly?: boolean;
   allowCommand?: (command: BrowserCommand, operation: OperationContext) => boolean | Promise<boolean>;
   engine?: DecisionEngine;
+  /**
+   * Opt-in image understanding for `screenDecide` (CLI/MCP `screen_decide`): an OpenAI-compatible Chat Completions
+   * endpoint, or your own adapter. Screenshots go only to this endpoint and only when `screenDecide` is called.
+   */
+  vision?: ImageUnderstanding | ImageUnderstandingOptions;
   maxElements?: number;
   maxTexts?: number;
   maxCandidates?: number;
