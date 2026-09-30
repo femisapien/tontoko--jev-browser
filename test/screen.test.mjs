@@ -289,3 +289,47 @@ test('journal launch evidence keeps display settings and redacts credentials, he
  assert.deepEqual(launch.contextOptions,{viewport:{width:360,height:240},locale:'en-US',httpCredentials:'[redacted]',extraHTTPHeaders:'[redacted]'});
  assert.deepEqual(launch.launchOptions,{env:'[redacted]'});assert.equal(launch.storageState,'[redacted]');
 });
+test('the journal header records when the session started, before its first action',async t=>{
+ const outputDir=await mkdtemp(join(root,'started-'));const {core}=await fixture(t,{outputDir});
+ const created=Date.now();
+ // The header is written with the first journal row; its timestamp still reports session start.
+ await new Promise(resolve=>setTimeout(resolve,30));
+ await core.screen({action:'look'});
+ const log=(await readdir(outputDir)).find(n=>n.endsWith('.jsonl'));
+ const [header,row]=(await readFile(join(outputDir,log),'utf8')).trim().split('\n').map(JSON.parse);
+ assert.equal(header.action.kind,'header');
+ assert.ok(Date.parse(header.action.startedAt)<=Date.parse(row.action.startedAt),'header starts no later than the first action');
+ assert.ok(Date.parse(header.action.startedAt)<=created,'header reports session creation');
+});
+const scrollBlocks='<style>html,body{margin:0}div{height:320px;font:40px sans-serif}</style>'+
+ Array.from({length:12},(_,i)=>'<div style="background:hsl('+i*37+',70%,60%)" onclick="document.title=\'clicked-'+i+'\'">Block '+i+'</div>').join('');
+test('a scroll is captured after the wheel settles and its observation authorizes the next click',async t=>{
+ const {core,page}=await fixture(t);
+ // A page-driven smooth scroller, as many sites use: each wheel animates the window across several frames.
+ await page.setContent(scrollBlocks+'<script>let target=0;addEventListener("wheel",e=>{e.preventDefault();target=Math.min(target+Math.sign(e.deltaY)*640,document.documentElement.scrollHeight-innerHeight);'+
+  'const from=scrollY,start=performance.now();const step=now=>{const p=Math.min(1,(now-start)/250);scrollTo(0,from+(target-from)*p);if(p<1)requestAnimationFrame(step);};requestAnimationFrame(step);},{passive:false});</script>');
+ let seen=await core.screen({action:'look'});
+ seen=await core.screen({action:'scroll',x:100,y:100,deltaY:120,observationId:seen.observationId});
+ assert.equal(await page.evaluate(()=>scrollY),640,'the returned image was taken after the scroll finished');
+ const settled=await page.screenshot({type:'png',scale:'css'});
+ assert.ok(settled.equals(Buffer.from(seen.frames[0].data,'base64')),'the frame shows the scrolled position');
+ seen=await core.screen({action:'click',x:100,y:100,observationId:seen.observationId});
+ assert.equal(await page.title(),'clicked-2');assert.equal(seen.action.outcome,'executed');
+});
+test('native wheel scrolling returns the scrolled image and a usable observation',async t=>{
+ const {core,page}=await fixture(t);await page.setContent(scrollBlocks);
+ let seen=await core.screen({action:'look'});
+ seen=await core.screen({action:'scroll',x:100,y:100,deltaY:640,observationId:seen.observationId});
+ const y=await page.evaluate(()=>scrollY);assert.ok(y>0);
+ const settled=await page.screenshot({type:'png',scale:'css'});
+ assert.ok(settled.equals(Buffer.from(seen.frames[0].data,'base64')),'the frame shows the scrolled position');
+ await core.screen({action:'click',x:100,y:100,observationId:seen.observationId});
+ assert.equal(await page.title(),'clicked-'+Math.floor((y+100)/320));
+});
+test('a scroll that moves nothing still returns promptly',async t=>{
+ const {core}=await fixture(t);
+ let seen=await core.screen({action:'look'});
+ const started=performance.now();
+ seen=await core.screen({action:'scroll',deltaY:-200,observationId:seen.observationId});
+ assert.ok(performance.now()-started<2_000);assert.equal(seen.action.outcome,'executed');
+});

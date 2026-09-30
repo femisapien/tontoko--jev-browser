@@ -60,6 +60,10 @@ type Capture = { frames: ScreenFrame[]; evidence: FrameEvidence[]; viewport: Scr
 type EvidenceAction = Omit<ScreenResult['action'],'kind'> & { kind: string };
 const actions = new Set(screenSchema.options.map(option => option.shape.action.value));
 const settleMs = 5_000;
+// A wheel scrolls asynchronously, sometimes animated across frames by the browser or the page.
+// Capture waits for scroll events to stop for two animation frames, or for none to start, within a cap.
+const scroll = { key: 'jev-browser.screen.scroll', quietFrames: 2, idleMs: 200, capMs: 1_500 };
+type ScrollWatch = { events: number; seen: number; quiet: number; start: number; stop: () => void };
 const playwrightVersion = (createRequire(import.meta.url)('playwright/package.json') as { version: string }).version;
 // Journal headers keep plain display settings; credentials, headers, paths, endpoints and other values become markers.
 const plainLaunch = new Set(['headless','channel','slowMo','chromiumSandbox','devtools']);
@@ -101,6 +105,37 @@ async function viewportGeometry(page: Page, op: OperationContext): Promise<Viewp
   } finally { await value.dispose(); }
 }
 
+/** Starts counting scroll events on any element before a wheel is sent. */
+async function watchScroll(page: Page, op: OperationContext): Promise<void> {
+  const handle = await page.waitForFunction(key => {
+    const slot = window as unknown as Record<symbol, ScrollWatch | undefined>, id = Symbol.for(key);
+    slot[id]?.stop();
+    const watch: ScrollWatch = { events: 0, seen: 0, quiet: 0, start: 0, stop: () => removeEventListener('scroll', count, true) };
+    const count = () => { watch.events++; };
+    addEventListener('scroll', count, { capture: true, passive: true });
+    slot[id] = watch;
+    return true;
+  }, scroll.key, { timeout: op.timeoutMs, signal: op.signal });
+  await handle.dispose();
+}
+/** Waits, per animation frame, until the scroll that followed a wheel has settled. Its own cap only ends the wait. */
+async function scrollSettled(page: Page, op: OperationContext): Promise<void> {
+  const signal = AbortSignal.any([op.signal, AbortSignal.timeout(Math.min(op.timeoutMs, scroll.capMs + 500))]);
+  try {
+    const handle = await page.waitForFunction(({ key, quietFrames, idleMs, capMs }) => {
+      const slot = window as unknown as Record<symbol, ScrollWatch | undefined>, id = Symbol.for(key), watch = slot[id];
+      if (!watch) return true;
+      const now = performance.now();
+      watch.start ||= now;
+      if (watch.events !== watch.seen) { watch.seen = watch.events; watch.quiet = 0; } else watch.quiet++;
+      if (!(watch.events ? watch.quiet >= quietFrames : now - watch.start >= idleMs) && now - watch.start < capMs) return false;
+      watch.stop(); delete slot[id];
+      return true;
+    }, scroll, { polling: 'raf', timeout: 0, signal });
+    await handle.dispose();
+  } catch (error) { if (op.signal.aborted || page.isClosed()) throw error; }
+}
+
 /** Field-level feedback naming the action and field paths; never echoes supplied values. */
 export function invalidScreenRequest(input: unknown, issues: readonly { path: readonly PropertyKey[]; message: string }[], observationId?: string): BrowserError {
   const kind = input && typeof input === 'object' && 'action' in input && typeof input.action === 'string' && (actions as Set<string>).has(input.action) ? input.action : undefined;
@@ -116,7 +151,9 @@ export class ScreenController {
   private tracking?: Tracking;
   private readonly files?: FileAccess;
   private journal?: Promise<string>;
-  constructor(private readonly page: () => Page, outputDir?: string, private readonly dialogPending?: () => boolean, private readonly launch?: Partial<BrowserLaunchOptions>) {
+  /** The journal file is created lazily, but its header reports when the session started. */
+  constructor(private readonly page: () => Page, outputDir?: string, private readonly dialogPending?: () => boolean, private readonly launch?: Partial<BrowserLaunchOptions>,
+    private readonly startedAt: string = new Date().toISOString()) {
     if (outputDir) this.files = new FileAccess([], outputDir);
   }
   private track(page: Page): Tracking {
@@ -224,7 +261,7 @@ export class ScreenController {
   private header(): string {
     const page = this.page(), browser = page.context().browser(), launch = launchEvidence(this.launch);
     return JSON.stringify({
-      action: { id: randomUUID(), kind: 'header', startedAt: new Date().toISOString(), durationMs: 0, outcome: 'observed' }, input: {}, frames: [],
+      action: { id: randomUUID(), kind: 'header', startedAt: this.startedAt, durationMs: 0, outcome: 'observed' }, input: {}, frames: [],
       header: { jevBrowser: version, playwright: playwrightVersion, ...(browser ? { browser: { name: browser.browserType().name(), version: browser.version() } } : {}),
         viewport: page.viewportSize(), ...(launch ? { launch } : {}) },
     })+'\n';
@@ -291,6 +328,7 @@ export class ScreenController {
       const point = (x: number, y: number) => ({ x: x / previous!.geometry.scale, y: y / previous!.geometry.scale });
       signal.throwIfAborted();
       const baseline = generation;
+      if (request.action === 'scroll') await watchScroll(page,operation());
       effectStarted = !['look','wait'].includes(request.action);
       await perform(async () => { const op=operation(); switch (request!.action) {
         case 'look': break;
@@ -316,6 +354,8 @@ export class ScreenController {
         case 'wait': await delay(request.milliseconds,undefined,{signal:operation().signal}); break;
       } });
       unsupported(tracking);
+      // The image and its geometry must show where the wheel came to rest, or the next input would be judged stale.
+      if (request.action === 'scroll' && !tracking.navigations.size && tracking.generation === generation) await scrollSettled(page,operation());
       let captured: Capture | undefined;
       for (let attempt=0; !captured; attempt++) {
         if (attempt || tracking.navigations.size || tracking.generation !== generation) await this.settle(page,tracking,operation());
