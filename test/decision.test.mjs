@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as sdk from '../dist/index.js';
+import { publicError } from '../dist/errors.js';
 import { apiResult } from './helpers.mjs';
 const request = {state:{screen:'synthetic test'},questions:{action:{type:'choice',instructions:'Choose a button',criteria:{a:'Submit',__none__:'No match'}}}};
 
@@ -137,4 +138,22 @@ test('an invalid decision baseURL is a configuration error', async () => {
   await withEnv({JEV_API_KEY:'HOSTED-TEST-KEY'},async()=>{
     for(const baseURL of ['not a url','ftp://127.0.0.1:8765']) assert.throws(()=>new sdk.JevDecisionEngine({baseURL}),{code:'CONFIG'},baseURL);
   });
+});
+
+// The shape hosted Jev returns for an over-long request (captured live for #64).
+const tokenLimit = () => Response.json({detail:{error_type:'max_tokens_exceeded'}},{status:400});
+test('a hosted input token rejection is OBSERVATION_LIMIT with narrowing guidance, not PROVIDER_ERROR', async () => {
+  let count=0;
+  const engine = new sdk.JevDecisionEngine({apiKey:'test-only',fetch:async()=>{count++;return tokenLimit();}});
+  await assert.rejects(engine.decide(request,{maxRetries:2}), error => error.code==='OBSERVATION_LIMIT' && error.retryable===false && /scope/.test(error.message) && /maxElements/.test(error.message) && error.cause?.status===400);
+  assert.equal(count,1);
+  assert.deepEqual(Object.keys(publicError(await engine.decide(request).catch(e=>e))),['code','message','retryable']);
+});
+test('other HTTP 400 rejections stay non-retryable PROVIDER_ERROR', async () => {
+  for (const body of [{detail:{error_type:'invalid_request'}},{error_type:'max_tokens_exceeded'},'max_tokens_exceeded',{detail:'max_tokens_exceeded'}]) {
+    const engine = new sdk.JevDecisionEngine({apiKey:'test-only',fetch:async()=>typeof body==='string'?new Response(body,{status:400}):Response.json(body,{status:400})});
+    await assert.rejects(engine.decide(request), {code:'PROVIDER_ERROR',retryable:false,message:/HTTP 400/});
+  }
+  const engine = new sdk.JevDecisionEngine({apiKey:'test-only',fetch:async()=>Response.json({detail:{error_type:'max_tokens_exceeded'}},{status:500})});
+  await assert.rejects(engine.decide(request), {code:'PROVIDER_ERROR',retryable:true});
 });

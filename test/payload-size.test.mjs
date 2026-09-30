@@ -99,3 +99,27 @@ test('act and observe fail with OBSERVATION_LIMIT before any provider call when 
   await assert.rejects(core.observe('Open item 7'),error=>error.code==='OBSERVATION_LIMIT');
   assert.equal(seam.requests.length,0);
 });
+
+test('a hosted input token rejection surfaces as OBSERVATION_LIMIT on every decision path',async t=>{
+  // The #37 page is ~86 KB on the wire: under the 128 KiB pre-check, but hosted Jev rejects it by token count.
+  let calls=0;
+  const decisions=new JevDecisionEngine({baseURL:'http://127.0.0.1:9/',fetch:async()=>{calls++;return Response.json({detail:{error_type:'max_tokens_exceeded'}},{status:400});}});
+  const core=new JevBrowser({page:await page(t),engine:decisions,...limits});
+  t.after(()=>core.close());
+  const paths={
+    observe:()=>core.observe('Edit Customer 7'),
+    act:()=>core.act('Edit Customer 7'),
+    run:()=>core.run('Edit Customer 7'),
+    extract:()=>core.extract('Customer names',z.object({names:z.array(z.string())})),
+    locateSemantic:()=>core.locateSemantic('The edit button of Customer 7'),
+    compareSemantic:()=>core.compareSemantic({actual:{description:'The status of Customer 7'},expected:'Active'},{maxCandidates:1000}),
+  };
+  for(const [name,call] of Object.entries(paths)){
+    const before=calls;
+    const error=await call().then(()=>undefined,e=>e);
+    assert.equal(error?.code,'OBSERVATION_LIMIT',`${name}: ${error?.code} ${error?.message}`);
+    assert.equal(error.retryable,false,name);
+    assert.match(error.message,/Narrow scope or exclude, or lower maxElements\/maxTexts\/maxCandidates/,name);
+    assert.ok(calls>before,`${name} reached the provider`);
+  }
+});
