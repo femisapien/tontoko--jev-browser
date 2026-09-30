@@ -83,6 +83,17 @@ function launchEvidence(options: Partial<BrowserLaunchOptions> = {}): Record<str
 const dimensionsEqual = (a: ReturnType<Page['viewportSize']>, b: ReturnType<Page['viewportSize']>) =>
   a === null || b === null ? a === b : a.width === b.width && a.height === b.height;
 const imageSize = (png: Buffer) => ({ width: png.readUInt32BE(16), height: png.readUInt32BE(20) });
+// Chromium refuses Page.captureScreenshot with "Unable to capture screenshot" while the page has no compositor frame yet,
+// e.g. a fresh or just-committed document on a loaded machine. The refusal is transient, so the screenshot is asked
+// for again after a short, growing pause until the operation budget or signal ends the wait.
+const noFrameYet = (error: unknown) => error instanceof Error && error.message.includes('Unable to capture screenshot');
+async function screenshot(page: Page, operation: () => OperationContext, signal: AbortSignal): Promise<Buffer> {
+  for (let pause = 20;; pause = Math.min(pause * 2, 200)) {
+    try { return await page.screenshot({ type:'png', scale:'css', animations:'allow', caret:'initial', timeout:operation().timeoutMs, signal }); }
+    catch (error) { if (!noFrameYet(error) || signal.aborted) throw error; }
+    await delay(pause, undefined, { signal });
+  }
+}
 const sameGeometry = (a: ViewportGeometry, b: ViewportGeometry) =>
   (Object.keys(a) as (keyof ViewportGeometry)[]).every(key => a[key] === b[key]);
 async function viewportGeometry(page: Page, op: OperationContext): Promise<ViewportGeometry> {
@@ -237,7 +248,7 @@ export class ScreenController {
         const op=operation(), signal=AbortSignal.any([op.signal,interrupt.signal]);
         if (i) await delay(interval,undefined,{signal});
         signal.throwIfAborted();await this.unsupported(tracking);
-        const png=await page.screenshot({type:'png',scale:'css',animations:'allow',caret:'initial',timeout:op.timeoutMs,signal});
+        const png=await screenshot(page,operation,signal);
         const capturedAt=new Date().toISOString(), elapsedMs=performance.now()-started;
         // Frames intentionally span animation and scrolling. Bind freshness to the last frame,
         // before optional file writes, without requiring constant scroll across the sequence.
@@ -338,8 +349,7 @@ export class ScreenController {
         if (previous.page !== page || previous.generation !== tracking.generation || !dimensionsEqual(previous.configured, page.viewportSize()))
           throw new BrowserError('STALE_SCREEN', 'The screen observation is no longer current. Look again before any input.');
         if (!page.viewportSize()) {
-          const op=operation();
-          const current = imageSize(await page.screenshot({ type:'png', scale:'css', animations:'allow', caret:'initial', timeout:op.timeoutMs, signal:op.signal }));
+          const current = imageSize(await screenshot(page, operation, operation().signal));
           if (!dimensionsEqual(current, previous.viewport) || previous.generation !== tracking.generation)
             throw new BrowserError('STALE_SCREEN', 'The screen viewport changed. Look again before any input.');
         }
