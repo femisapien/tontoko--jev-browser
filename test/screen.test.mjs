@@ -376,6 +376,19 @@ test('a scroll that moves nothing still returns promptly',async t=>{
  seen=await core.screen({action:'scroll',deltaY:-200,observationId:seen.observationId});
  assert.ok(performance.now()-started<2_000);assert.equal(seen.action.outcome,'executed');
 });
+// Chromium answers Page.captureScreenshot with "Unable to capture screenshot" while a fresh page has no compositor frame yet;
+// under load that can outlast one immediate retake.
+test('a page that has not produced a frame yet is captured once it does, not reported as a failed capture',async t=>{
+ const {core,page}=await fixture(t);let refusals=3;const screenshot=page.screenshot.bind(page);
+ page.screenshot=async(...args)=>{if(refusals>0){refusals--;throw new Error('page.screenshot: Protocol error (Page.captureScreenshot): Unable to capture screenshot');}return screenshot(...args);};
+ let seen=await core.screen({action:'look'});
+ assert.equal(refusals,0);assert.equal(seen.frames.length,1);assert.equal(seen.action.outcome,'observed');
+ refusals=2;
+ seen=await core.screen({action:'scroll',deltaY:-200,observationId:seen.observationId});assert.equal(seen.action.outcome,'executed');
+ // A refusal that never ends is bounded by the operation budget and named as a timeout, not an unknown failure.
+ refusals=Infinity;
+ await assert.rejects(core.screen({action:'look'},{timeoutMs:600}),error=>{assert.equal(error.code,'SCREEN_FAILED');assert.equal(error.details.reason,'timeout');return true;});
+});
 // Some frameworks call history.replaceState or pushState with the current URL on scroll: here on every scroll event and once more after it settles.
 const historyOnScroll=method=>scrollBlocks+'<script>let idle;const update=()=>history.'+method+'(history.state,"",location.href);'+
  'addEventListener("scroll",()=>{update();clearTimeout(idle);idle=setTimeout(update,150);});</script>';

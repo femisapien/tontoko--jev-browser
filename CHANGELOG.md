@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `screen` no longer fails with `SCREEN_FAILED` (`unknown`) when Chromium has not yet rendered a fresh page's first frame; it waits for the frame within the operation budget and reports `timeout` if it never arrives.
 - Breaking: `playwright-core` (`>=1.62.0 <2`) and `zod` (`^4.2.0`) are now peer dependencies instead of bundled `playwright` and `zod` copies, so the package shares your project's Playwright and Zod; an older `playwright-core` fails with `CONFIG`. Yarn Berry users must add them explicitly. See `docs/migration.md`.
 - Breaking: native `select_option` with `by: 'value'` now matches option values exactly instead of value or label; omit `by` to keep matching either. A value with no matching option fails with `TIMEOUT` when the operation budget ends. See `docs/migration.md`.
 - Breaking: `open` of an existing named session with different launch options (browser, headless, context options, storage state, profile, endpoints, limits, timeouts, file roots, `--caps` and other flags fixed at start) now fails with `SESSION_MODE_MISMATCH` instead of silently keeping the original options. See `docs/migration.md`.
