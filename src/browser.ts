@@ -62,6 +62,7 @@ function mergeRunValues(base: Record<string, RunValue> = {}, extra: Record<strin
     throw new BrowserError('CONTINUATION_CONFLICT','Resume may add inputs, but cannot replace an existing value or its object structure.');
   return merged;
 }
+const tabClosed = (cause?: unknown) => new BrowserError('TAB_CLOSED', 'The selected tab was closed. List tabs and choose another with `tabs` action `select` (MCP `browser_tabs`), or open one with action `new`; Jev does not switch tabs by itself.', cause === undefined ? {} : { cause });
 const pageOrigin = (page: Page): string => new URL(page.url()).origin;
 // An input or advance with an unknown outcome is never hidden by making its stop resumable.
 const unknownNonCommit = (result: RunResult): boolean => !!result.effects?.some(effect=>effect.kind!=='commit'&&effect.status==='unknown');
@@ -202,6 +203,9 @@ export class JevBrowser {
   private async exclusive<T>(options: OperationOptions, fn: (operation: Operation) => Promise<T>, command?: string): Promise<T> {
     if (this.closed) throw new BrowserError('CLOSED', 'This browser session is closed.');
     if (this.active || pageLeases.has(this.page)) throw new BrowserError('BUSY', 'This Page already has an active operation. Await it, or use a separate Page.', { retryable: true });
+    // A closed selected tab is reported, never silently replaced: the caller chooses the next tab.
+    // Screen tools have no tab selection and report the closed Page as their own failure reason.
+    if (this.page.isClosed() && command !== 'tabs' && command !== 'screen') throw tabClosed();
     this.nativeBrowser.guard(command);
     const timeoutMs = positiveInteger(options.timeoutMs ?? this.timeoutMs, 'timeoutMs'), budget = AbortSignal.timeout(timeoutMs);
     const signal = AbortSignal.any([this.lifetime.signal, budget, ...(options.signal ? [options.signal] : [])]);
@@ -223,7 +227,8 @@ export class JevBrowser {
     const timedOut = signal.aborted ? !closed && (signal.reason as Error | undefined)?.name === 'TimeoutError' : error instanceof Error && error.name === 'TimeoutError';
     // A specific cause (including a covering element that outlasted the budget) wins over a generic timeout or cancellation.
     let specific: BrowserError | undefined;
-    if (error instanceof BrowserError) specific = error.code === 'CANCELLED' && timedOut ? undefined : error;
+    if (!closed && !(error instanceof BrowserError) && this.page.isClosed()) specific = tabClosed(error);
+    else if (error instanceof BrowserError) specific = error.code === 'CANCELLED' && timedOut ? undefined : error;
     else if (timedOut) specific = obscuredTarget(error);
     else if (!signal.aborted) { const mapped = browserError(error); specific = mapped.code === 'CANCELLED' ? undefined : mapped; }
     if (specific) { if (effect) specific.retryable = false; return specific; }

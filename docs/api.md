@@ -117,6 +117,7 @@ A dialog result must be handled with `handle_dialog` before other operations. `c
 | `TARGET_OBSCURED` | Another element intercepts pointer events over the target, and Playwright's call log shows the action was never delivered. Dismiss the covering element, then observe again. |
 | `AMBIGUOUS_TARGET` | A caller selector matched several elements under Playwright strict mode. Use a more specific selector or a snapshot ref. |
 | `INVALID_SELECTOR` | A caller selector or `scope` could not be parsed. `run()` and `resume()` check `scope` before observing, so no partial result is attached. |
+| `TAB_CLOSED` | The selected tab was closed, for example by the page or the caller's own code. Jev does not switch tabs by itself: use `tabs` with action `list`, then `select` (or `new`). Screen tools report a closed Page as `SCREEN_FAILED` with reason `page-closed` instead. |
 | `NAVIGATION_FAILED` | Navigation, back, forward or reload failed, for example on a DNS or connection error. |
 | `BROWSER_LAUNCH_FAILED` | Launching or attaching to a browser failed. A missing browser build names the `jev-browser install` command. |
 | `ACTION_INTERRUPTED`, `ACTION_FAILED` | An AI-planned action started and did not finish normally. It may have changed the page. |

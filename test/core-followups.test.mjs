@@ -105,3 +105,17 @@ test('closing the continuation Page drops its continuations',async t=>{
  assert.equal(core.continuations.size,0);
  await assert.rejects(core.resume(result.continuation.id),{code:'CONTINUATION_NOT_FOUND'});
 });
+
+test('a closed selected tab is TAB_CLOSED until another tab is selected; Jev does not switch by itself',async t=>{
+ const {core,page}=await fixture(t);await core.goto(server.url+'/a');
+ await core.native({command:'tabs',action:'new',url:server.url+'/b'});
+ const closed=core.page;await closed.close();
+ const error=await core.snapshot().then(()=>assert.fail('snapshot resolved'),error=>error);
+ assert.equal(error.code,'TAB_CLOSED');assert.match(error.message,/tabs.*select/);
+ await assert.rejects(core.native({command:'click',target:'p'}),{code:'TAB_CLOSED'});
+ assert.equal(core.page,closed);
+ const tabs=(await core.native({command:'tabs',action:'list'})).tabs;
+ assert.equal(tabs.length,1);assert.equal(tabs.some(tab=>tab.selected),false);
+ await core.native({command:'tabs',action:'select',index:0});
+ assert.equal(core.page,page);assert.match((await core.snapshot()).url,/\/a$/);
+});
