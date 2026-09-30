@@ -12,6 +12,7 @@
 - `run()` progress waits watch only the observed frames and scope roots, so a change in an unrelated frame or region outside `scope` no longer ends a wait early.
 - If the Page closes while a `run()` pauses, its own result or error is returned instead of a failure from preparing carried wizard input, and no continuation is kept.
 - `run()` re-decides instead of executing a speculative action that targets a control whose input it just applied, and a model "done" answer given before inputs were applied no longer skips to the final `expect`.
+- `extract()` evidence keys escape a literal `.` or `\` inside a field name with `\` (for example `a\.b` for a field named `a.b`), and a field under an empty name no longer shares a key with a root field, so different fields never share an evidence key; ordinary names are unchanged.
 
 ## 0.13.0
 

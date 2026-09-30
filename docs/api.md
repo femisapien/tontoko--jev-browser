@@ -54,6 +54,8 @@ Schemas can be scalar roots, objects with scalar fields, nested objects, or arra
 
 Use `recordsScope` for tables/cards with non-semantic markup. Nested record arrays follow actual nested DOM records. A value is copied from the selected source and validated; it is never freely generated. Each array item is restricted to one record's sources. For separate unrelated objects on the same page, narrow `scope` or make separate calls.
 
+`evidence` is keyed by field path: field names and array indexes joined with `.` (`invoices.0.total`), a scalar root as `value`, and array items of scalars as `<path>.<index>.value`. A literal `.` or `\` inside a field name is escaped with `\` (`{'a.b': …}` is `a\.b`, while `{a: {b: …}}` is `a.b`), so each key splits back into its field names; an empty field name is an empty segment.
+
 Evidence uses dotted object paths and zero-based record indices, such as `invoices.0.total`. Scalar roots use `value`. Scalar array items use `0.value`. Evidence contains original text, surrounding context, frame, source ID and copied value; hrefs also identify the `href` attribute. A missing required source is `EXTRACTION_MISSING`. Data violating the final schema is `EXTRACTION_SCHEMA`. An empty record set is `[]` unless the schema requires a minimum count.
 
 The CLI/MCP accepts exactly one of `fields` (simple scalar definitions) or `schema` (JSON Schema). SDK callers use Zod directly. The JSON Schema conversion follows the installed Zod implementation; unsupported constructs are rejected.
