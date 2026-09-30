@@ -18,6 +18,8 @@ Credentials follow the endpoint. `JEV_API_KEY` / `TYPESAFE_API_KEY` from the env
 
 `locateSemantic` sends the caller description. `compareSemantic` / `assertSemantic` send the caller-provided expected semantic meaning whenever local exact comparison cannot settle the result, together with the selected grounded actual evidence. Using semantic comparison on a secret expected literal therefore explicitly exposes that literal to the configured provider. Prefer deterministic/native/Playwright assertions when a sensitive fact can be checked locally.
 
+Visible text longer than 700 characters is observed as its first 700 characters and marked `truncated`; only that start is sent. It is decision context only: extraction never copies it, semantic source discovery never binds it, and run readback never compares against it.
+
 Native operations, screenshots, assertions, navigation, and tool discovery do not call Jev. Screenshots, console output, storage exports and traces can contain sensitive content. The TypeSafe SDK is configured with logging off. Single-operation decisions default to no retries; a goal may retry a read-only decision through the SDK up to `decisionRetries` (default 2, maximum 2), within its operation budget. Browser mutations are never retried by that transport policy. API responses are validated before being used. No credentials or API keys are stored by the package on behalf of the provider; keys are read from environment/configuration. Consult the provider's current data policy before using customer data.
 
 ## Files and profiles

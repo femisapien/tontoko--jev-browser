@@ -37,7 +37,7 @@ export async function verifyReadback(
     if (old > 0) { before = new Map(before); before.set(record.context, old-1); return false; }
     return true;
   }).map(record => {
-    const ids=new Set(record.textIds),sources=snapshot.texts.filter(source=>ids.has(source.id));
+    const ids=new Set(record.textIds),sources=snapshot.texts.filter(source=>ids.has(source.id)&&!source.truncated);
     const matching=inputs.filter(input=>sources.some(source=>sourceMatches(input,source)));
     const identity=hasAnchor(matching);
     return {record,sources,identity};

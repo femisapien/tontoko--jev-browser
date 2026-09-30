@@ -34,6 +34,8 @@ export interface TextEvidence {
   text: string;
   context: string;
   value?: boolean;
+  /** The displayed text exceeded 700 characters and `text` holds only its start: context, never copied or compared evidence. */
+  truncated?: boolean;
 }
 export interface RecordEvidence { id: string; frame: number; context: string; textIds: string[]; parentId?: string; readOnly?: boolean }
 export interface Snapshot {

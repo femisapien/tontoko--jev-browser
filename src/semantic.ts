@@ -104,7 +104,8 @@ function sources(snapshot: Snapshot, limit: number): { id: string; evidence: Sem
   if (snapshot.truncatedTexts || snapshot.truncatedElements)
     throw new BrowserError('OBSERVATION_LIMIT','Semantic evidence observation was truncated. Narrow scope or raise observation limits.');
   const all = [
-    ...snapshot.texts.filter(source => source.role !== 'term').map(textEvidence),
+    // Shortened text is not the complete actual value, so it cannot settle a comparison.
+    ...snapshot.texts.filter(source => source.role !== 'term' && !source.truncated).map(textEvidence),
     ...snapshot.elements.filter(element => !!element.name).map(elementEvidence),
   ];
   if (all.length > limit) throw new BrowserError('CANDIDATE_LIMIT','Too many semantic evidence candidates. Narrow scope.');

@@ -20,7 +20,27 @@ export interface Captured {
   changeKeys: Record<number, string>;
   dispose(): Promise<void>;
 }
-export async function capture(page: Page, options: { semanticRefs?: boolean; scope?: string; recordsScope?: string; maxElements: number; maxTexts: number; selection?: {frame:Frame;roots:ElementHandle<Element>[]}; signal?: AbortSignal }): Promise<Captured> {
+interface CaptureOptions { signal?: AbortSignal; deadline?: number; semanticRefs?: boolean; scope?: string; requireScope?: boolean; recordsScope?: string; maxElements: number; maxTexts: number; selection?: {frame:Frame;roots:ElementHandle<Element>[]} }
+// Playwright reports these when a frame is removed, or its document replaced, during an evaluation.
+const detachedFrame = /Frame (?:was|has been) detached/;
+const replacedDocument = (error: unknown) => error instanceof BrowserError ? error.code === 'STALE_SNAPSHOT' : error instanceof Error && /Execution context was destroyed/.test(error.message);
+/** Observation is read-only, so a capture interrupted by navigation is retaken a bounded number of times. */
+export async function capture(page: Page, options: CaptureOptions): Promise<Captured> {
+  for (let attempt = 1; ; attempt++) {
+    try { return await captureOnce(page, options); }
+    catch (error) {
+      // Selected roots belong to the replaced document, so only a whole-page capture can be retaken.
+      if (options.selection || !replacedDocument(error)) throw error;
+      // Retries spend the caller's operation budget; they never extend it.
+      options.signal?.throwIfAborted();
+      const wait = Math.min(2_000, Math.floor((options.deadline ?? Infinity) - performance.now()));
+      if (attempt >= 3 || wait <= 0) throw new BrowserError('STALE_SNAPSHOT', 'Page kept navigating while it was being observed. Observe again.', { retryable: true });
+      await page.waitForLoadState('domcontentloaded', { timeout: wait, ...(options.signal ? { signal: options.signal } : {}) }).catch(() => undefined);
+      options.signal?.throwIfAborted();
+    }
+  }
+}
+async function captureOnce(page: Page, options: CaptureOptions): Promise<Captured> {
   const refs = new Map<string, ElementRef>();
   const textRefs = new Map<string, { frame: Frame; handle: ElementHandle<Element>; kind: DOM.SemanticTextKind }>();
   const changeKeys: Record<number,string> = {};
@@ -32,12 +52,11 @@ export async function capture(page: Page, options: { semanticRefs?: boolean; sco
     truncated: false, truncatedElements: false, truncatedTexts: false, recordInventoryComplete:true,
     scroll: await page.evaluate(() => ({ y: window.scrollY, maxY: Math.max(0, document.documentElement.scrollHeight - window.innerHeight), height: window.innerHeight })),
   };
+  let scopeFound = false;
   try {
-    for (const [frameIndex, frame] of page.frames().entries()) {
-      // Page evaluation has no Playwright timeout; stop between frames once the operation ended.
-      options.signal?.throwIfAborted();
-      if(options.selection && options.selection.frame !== frame)continue;
-      const {selection,signal:_signal,...ordinaryOptions}=options;
+    // Read a frame completely before recording it, so a frame removed mid-read leaves no partial evidence.
+    const observeFrame = async (frameIndex: number, frame: Frame) => {
+      const {selection,signal:_signal,deadline:_deadline,...ordinaryOptions}=options;
       const frameOptions = { ...ordinaryOptions, maxElements: Math.max(0, options.maxElements - data.elements.length), maxTexts: Math.max(0, options.maxTexts - data.texts.length) };
       // Use Playwright's native CSS resolver, including open shadow roots.
       const roots = options.selection?.roots ?? (options.scope ? (await frame.locator(`css=${options.scope}`).elementHandles()) as ElementHandle<Element>[] : undefined);
@@ -48,10 +67,14 @@ export async function capture(page: Page, options: { semanticRefs?: boolean; sco
       const result = await frame.evaluateHandle(observe, { roots, recordRoots });
       owned.push(result);
       const observed = await result.evaluate(r => ({ elements: r.elements, texts: r.texts, textKinds:r.textKinds, records: r.records, recordInventoryComplete:r.recordInventoryComplete, busy: r.busy, changeKey: r.changeKey, truncatedElements: r.truncatedElements, truncatedTexts: r.truncatedTexts }));
-      changeKeys[frameIndex] = observed.changeKey;
-      data.busy ||= observed.busy;
       const nodes = await result.getProperty('nodes'); owned.push(nodes);
       const properties = await nodes.getProperties();
+      const textNodes = options.semanticRefs ? await result.getProperty('textNodes') : undefined;
+      if (textNodes) owned.push(textNodes);
+      const textProperties = textNodes ? await textNodes.getProperties() : new Map<string, JSHandle>();
+      scopeFound ||= !!roots?.length;
+      changeKeys[frameIndex] = observed.changeKey;
+      data.busy ||= observed.busy;
       for (const [index, handle] of properties) {
         owned.push(handle);
         const description = observed.elements[Number(index)];
@@ -62,26 +85,39 @@ export async function capture(page: Page, options: { semanticRefs?: boolean; sco
         data.elements.push(info);
         refs.set(id, { frame, handle: element as ElementHandle<Element>, signature: description.signature, info });
       }
-      if (options.semanticRefs) {
-        const textNodes = await result.getProperty('textNodes'); owned.push(textNodes);
-        const textProperties = await textNodes.getProperties();
-        for (const [index, handle] of textProperties) {
-          owned.push(handle);
-          const element = handle.asElement();
-          if (element && observed.texts[Number(index)]) textRefs.set(`t${frameIndex}_${index}`, {frame,handle:element as ElementHandle<Element>,kind:observed.textKinds[Number(index)]!});
-        }
+      for (const [index, handle] of textProperties) {
+        owned.push(handle);
+        const element = handle.asElement();
+        if (element && observed.texts[Number(index)]) textRefs.set(`t${frameIndex}_${index}`, {frame,handle:element as ElementHandle<Element>,kind:observed.textKinds[Number(index)]!});
       }
       data.texts.push(...observed.texts.map((text, i) => ({ ...text, id: `t${frameIndex}_${i}`, frame: frameIndex })));
       data.records!.push(...observed.records.map(r => ({ id: `record${frameIndex}_${r.index}`, frame: frameIndex, context: r.context, readOnly: r.readOnly, textIds: r.texts.map(i => `t${frameIndex}_${i}`), ...(r.parent !== undefined ? { parentId: `record${frameIndex}_${r.parent}` } : {}) })));
       data.recordInventoryComplete &&= observed.recordInventoryComplete;
       data.truncatedElements ||= observed.truncatedElements;
       data.truncatedTexts ||= observed.truncatedTexts;
+    };
+    for (const [frameIndex, frame] of page.frames().entries()) {
+      // Page evaluation has no Playwright timeout; stop between frames once the operation ended.
+      options.signal?.throwIfAborted();
+      if(options.selection && options.selection.frame !== frame)continue;
+      await observeFrame(frameIndex, frame).catch((error: unknown) => {
+        // A child frame removed during capture is no longer part of the page; observe the rest.
+        if (!options.selection && frame !== page.mainFrame() && (frame.isDetached() || error instanceof Error && detachedFrame.test(error.message))) return;
+        throw error;
+      });
     }
     data.truncated = data.truncatedElements || data.truncatedTexts;
     options.signal?.throwIfAborted();
     if (page.url() !== rawURL) throw new BrowserError('STALE_SNAPSHOT', 'Page navigated while it was being observed. Observe again.', { retryable: true });
+    if (options.requireScope && options.scope && !scopeFound) throw new BrowserError('SCOPE_NOT_FOUND', 'The observation scope matched no element. Check the selector, or wait for that region to appear.');
     return { data, refs, textRefs, rawURL, changeKeys, dispose };
   } catch (error) { await dispose(); throw error; }
+}
+/** An explicit caller scope that matches nothing in any frame is an error, never an empty observation. */
+export async function assertScope(page: Page, scope: string | undefined): Promise<void> {
+  if (!scope) return;
+  for (const frame of page.frames()) if (await frame.locator(`css=${scope}`).count()) return;
+  throw new BrowserError('SCOPE_NOT_FOUND', 'The observation scope matched no element. Check the selector, or wait for that region to appear.');
 }
 /** Execute the shipped shared observation predicate, never caller/model-generated code. */
 export async function waitForFrameProgress(frame: Frame, baseline: string, timeoutMs: number, signal: AbortSignal): Promise<void> {

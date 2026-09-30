@@ -151,3 +151,20 @@ including plain HTTP ones, work as before.
 The upstream SDK's `TYPESAFE_BASE_URL` no longer redirects this library; use
 `JEV_BASE_URL`. Empty key variables, such as `JEV_API_KEY=` from
 `.env.example`, now count as unset.
+
+## Observation scope and long text (next release)
+
+An explicit `scope` that matches no element in any frame now fails with
+`SCOPE_NOT_FOUND` in `snapshot`, `observe`, `act`, `extract` and the semantic
+locate/compare/assert methods. Earlier releases returned an empty observation,
+`null` or a no-match error. To check that a region is absent, use a native
+`assert` with `count` or a Playwright Locator instead of an empty scoped
+snapshot. `run` and `resume` are unchanged: a goal whose scope disappears after
+navigation still stops or reports unverified readback.
+
+Displayed text longer than 700 characters was silently omitted before. It is
+now observed as its first 700 characters with `truncated: true` and counts
+toward `maxTexts`, so a page with many long paragraphs can reach
+`OBSERVATION_LIMIT` sooner; narrow `scope` or raise `maxTexts`. Read the full
+text of a known element with a Playwright Locator (for example a semantic
+`{locator, property: 'text'}` actual) rather than from a truncated source.

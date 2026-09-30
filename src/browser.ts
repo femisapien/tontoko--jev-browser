@@ -6,7 +6,7 @@ import { z } from 'zod';
 import type { EntryType } from '@typesafe-ai/sdk';
 import { JevDecisionEngine, type DecisionEngine, type DecisionRequest } from './decision.js';
 import { BrowserError, browserError, diagnostic, launchError, obscuredTarget } from './errors.js';
-import { capture, publicURL, verifyTarget, currentSemanticEvidence, readLocatorEvidence, semanticWithinScope, captureComboboxChoice, captureRegions, verifyOwnedOption, type Captured } from './observation.js';
+import { capture, publicURL, verifyTarget, currentSemanticEvidence, readLocatorEvidence, semanticWithinScope, captureComboboxChoice, captureRegions, verifyOwnedOption, assertScope, type Captured } from './observation.js';
 import { actionCandidates, actionDescription, modelElementId, inputBindings, modelElement, resolveSelectChoice } from './actions.js';
 import { flattenInputs } from './bindings.js';
 import { extractStructured } from './structured.js';
@@ -243,7 +243,7 @@ export class JevBrowser {
   async snapshot(options: OperationOptions = {}): Promise<Snapshot> {
     return this.exclusive(options, async operation => {
       await this.invalidate(); operation.signal.throwIfAborted();
-      const observed = await capture(this.page, { ...this.limits, scope: options.scope, signal: operation.signal });
+      const observed = await capture(this.page, { ...this.limits, scope: options.scope, requireScope: true, signal: operation.signal, deadline: operation.deadline });
       try { operation.signal.throwIfAborted(); this.snapshotCapture = observed; return observed.data; }
       catch (error) { await observed.dispose(); throw error; }
     });
@@ -258,7 +258,7 @@ export class JevBrowser {
     const tasks=[...descriptions];
     return this.exclusive(options,async operation=>{
       await this.invalidate();operation.signal.throwIfAborted();
-      const observed=await capture(this.page,{...this.limits,scope:options.scope,signal:operation.signal});
+      const observed=await capture(this.page,{...this.limits,scope:options.scope,requireScope:true,signal:operation.signal,deadline:operation.deadline});
       let retained=false;
       try{
         const {targets}=await locateSemanticTargets(observed.data,tasks,this.engine(),operation.signal,threshold);
@@ -322,6 +322,7 @@ export class JevBrowser {
       throw new BrowserError('INVALID_ARGUMENT','Semantic expected meaning must be a nonempty string.');
     if (!requests.length) return [];
     return this.exclusive(options, async operation => {
+      await assertScope(this.page, options.scope);
       const observationStarted = performance.now();
       const work = [], currentReaders:Array<(()=>Promise<SemanticEvidence|undefined>)|undefined>=[];
       for (const [index, request] of requests.entries()) {
@@ -330,7 +331,7 @@ export class JevBrowser {
         work.push({ ...actual, expected: request.expected, threshold: thresholds[index]!, sourceThreshold: sourceThresholds[index]! });
       }
       const needsObservation = work.some(item => !item.evidence);
-      const observed = needsObservation ? await capture(this.page,{...this.limits,scope:options.scope,semanticRefs:live,signal:operation.signal}) : undefined;
+      const observed = needsObservation ? await capture(this.page,{...this.limits,scope:options.scope,semanticRefs:live,signal:operation.signal,deadline:operation.deadline}) : undefined;
       const observationMs = performance.now()-observationStarted;
       try {
         operation.signal.throwIfAborted();
@@ -398,7 +399,7 @@ export class JevBrowser {
   async extract<S extends z.ZodType>(instruction: string, schema: S, options: ExtractOptions = {}): Promise<ExtractResult<z.output<S>>> {
     return this.exclusive(options, async operation => {
       await this.invalidate(); operation.signal.throwIfAborted();
-      const observed = await capture(this.page, { ...this.limits, scope: options.scope, recordsScope: options.recordsScope, signal: operation.signal });
+      const observed = await capture(this.page, { ...this.limits, scope: options.scope, requireScope: true, recordsScope: options.recordsScope, signal: operation.signal, deadline: operation.deadline });
       try { return await extractStructured(observed.data, instruction, schema, () => this.engine(), operation.signal, this.limits.maxCandidates); }
       finally { await observed.dispose(); }
     });
@@ -435,7 +436,7 @@ export class JevBrowser {
     let resolutions=structuredClone(seed.resolutions??[]);
     let result:RunResult, failure:BrowserError|undefined;
     try {result=await runGoal({
-      page: () => this.page, capture: () => capture(this.page,{...this.limits,scope:options.scope,signal:operation.signal}),
+      page: () => this.page, capture: () => capture(this.page,{...this.limits,scope:options.scope,signal:operation.signal,deadline:operation.deadline}),
       regions: () => captureRegions(this.page),
       captureRegion: ref => capture(this.page,{...this.limits,selection:{frame:ref.frame,roots:[ref.handle]},signal:operation.signal}),
       captureChoice: (ref,value) => captureComboboxChoice(this.page,ref,value,this.limits,{signal:operation.signal,timeoutMs:Math.min(this.remaining(operation),options.settleTimeoutMs??2000)}),
@@ -498,7 +499,7 @@ export class JevBrowser {
     const runOptions:RunOptions={...state.options,values,...(options.scope!==undefined?{scope:options.scope}:{}),...(options.timeoutMs!==undefined?{timeoutMs:options.timeoutMs}:{}),...(options.signal?{signal:options.signal}:{})};
     return this.exclusive({...options,timeoutMs:options.timeoutMs??state.options.timeoutMs??this.options.timeoutMs??60_000},async operation=>{
       if(state.carried){
-        const observed=await capture(this.page,{...this.limits,scope:state.options.scope,signal:operation.signal});
+        const observed=await capture(this.page,{...this.limits,scope:state.options.scope,signal:operation.signal,deadline:operation.deadline});
         try{if(state.carried.context!==JSON.stringify([observed.rawURL,observed.changeKeys]))
           throw new BrowserError('CONTINUATION_CONTEXT_CHANGED','The paused wizard view changed; carried input cannot be reused.');}
         finally{await observed.dispose();}
@@ -511,7 +512,7 @@ export class JevBrowser {
     await this.invalidate(); operation.signal.throwIfAborted();
     const { values, inputs } = inputBindings(instruction, options.values);
     if (Object.values(values).some(value => typeof value !== 'string')) throw new BrowserError('INVALID_ARGUMENT', 'Named input values must be strings.');
-    const observed = await capture(this.page, { ...this.limits, scope: options.scope, signal: operation.signal });
+    const observed = await capture(this.page, { ...this.limits, scope: options.scope, requireScope: true, signal: operation.signal, deadline: operation.deadline });
     let retained = false;
     try {
       if (observed.data.truncatedElements) throw new BrowserError('OBSERVATION_LIMIT', 'Action observation was truncated. Narrow scope or raise maxElements.');
