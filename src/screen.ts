@@ -58,6 +58,10 @@ type Tracking = { page: Page; generation: number; navigations: Set<Request>; wai
 type FrameEvidence = { sha256: string; width: number; height: number };
 type Capture = { frames: ScreenFrame[]; evidence: FrameEvidence[]; viewport: ScreenResult['viewport']; geometry: ViewportGeometry };
 type EvidenceAction = Omit<ScreenResult['action'],'kind'> & { kind: string };
+/** Shared by input-opened and held dialogs; the dialog text is never included. */
+export const screenDialogMessage = (dismissed: boolean) => 'A browser-native dialog opened'+(dismissed ? ' and was dismissed; observations continue on the same page' : '')+
+  '. It cannot be observed by this viewport tool; this is a tool capability limit, not a product failure.';
+const dialogMessage = screenDialogMessage(true);
 const actions = new Set(screenSchema.options.map(option => option.shape.action.value));
 const settleMs = 5_000;
 // A wheel scrolls asynchronously, sometimes animated across frames by the browser or the page.
@@ -81,11 +85,6 @@ const dimensionsEqual = (a: ReturnType<Page['viewportSize']>, b: ReturnType<Page
 const imageSize = (png: Buffer) => ({ width: png.readUInt32BE(16), height: png.readUInt32BE(20) });
 const sameGeometry = (a: ViewportGeometry, b: ViewportGeometry) =>
   (Object.keys(a) as (keyof ViewportGeometry)[]).every(key => a[key] === b[key]);
-function unsupported(tracking: Tracking): void {
-  if (tracking.popup && !tracking.popup.isClosed()) throw new BrowserError('SCREEN_POPUP_UNSUPPORTED','A new browser tab opened. This viewport session cannot inspect or switch that tab; this is a tool capability limit, not a product failure.');
-  // Playwright intercepts the chooser and the Page stays usable, so it is reported once instead of blocking later observations.
-  if (tracking.fileChooser) { tracking.fileChooser = false; throw new BrowserError('SCREEN_FILE_CHOOSER_UNSUPPORTED','A native file chooser opened. This viewport tool cannot inspect or operate it; this is a tool capability limit, not a product failure.'); }
-}
 async function viewportGeometry(page: Page, op: OperationContext): Promise<ViewportGeometry> {
   // The first predicate evaluation returns only viewport numbers. A primitive handle avoids a
   // second unbounded page evaluation during jsonValue; the native wait honors cancellation.
@@ -151,9 +150,24 @@ export class ScreenController {
   private readonly files?: FileAccess;
   private journal?: Promise<string>;
   /** The journal file is created lazily, but its header reports when the session started. */
+  /** With dismissDialogs (screen-only sessions, which have no dialog or tab tools), a native dialog or popup tab is reported once, then dismissed or closed. */
   constructor(private readonly page: () => Page, outputDir?: string, private readonly dialogPending?: () => boolean, private readonly launch?: Partial<BrowserLaunchOptions>,
-    private readonly startedAt: string = new Date().toISOString()) {
+    private readonly startedAt: string = new Date().toISOString(), private readonly dismissDialogs?: () => Promise<boolean>) {
     if (outputDir) this.files = new FileAccess([], outputDir);
+  }
+  /** Throws a capability-limit error for a popup tab, file chooser or (when recovering) held dialog. Recovery reports each once. */
+  private async unsupported(tracking: Tracking): Promise<void> {
+    if (this.dismissDialogs && await this.dismissDialogs())
+      throw new BrowserError('SCREEN_DIALOG_UNSUPPORTED', dialogMessage);
+    const popup = tracking.popup;
+    if (popup && !popup.isClosed()) {
+      if (!this.dismissDialogs) throw new BrowserError('SCREEN_POPUP_UNSUPPORTED','A new browser tab opened. This viewport session cannot inspect or switch that tab; this is a tool capability limit, not a product failure.');
+      tracking.popup = undefined;
+      await popup.close().catch(() => undefined);
+      throw new BrowserError('SCREEN_POPUP_UNSUPPORTED','A new browser tab opened and was closed; observations continue on the original page. This viewport session cannot inspect or switch tabs; this is a tool capability limit, not a product failure.');
+    }
+    // Playwright intercepts the chooser and the Page stays usable, so it is reported once instead of blocking later observations.
+    if (tracking.fileChooser) { tracking.fileChooser = false; throw new BrowserError('SCREEN_FILE_CHOOSER_UNSUPPORTED','A native file chooser opened. This viewport tool cannot inspect or operate it; this is a tool capability limit, not a product failure.'); }
   }
   private track(page: Page): Tracking {
     if (this.tracking?.page === page) return this.tracking;
@@ -222,13 +236,13 @@ export class ScreenController {
       for (let i=0;i<count;i++) {
         const op=operation(), signal=AbortSignal.any([op.signal,interrupt.signal]);
         if (i) await delay(interval,undefined,{signal});
-        signal.throwIfAborted();unsupported(tracking);
+        signal.throwIfAborted();await this.unsupported(tracking);
         const png=await page.screenshot({type:'png',scale:'css',animations:'allow',caret:'initial',timeout:op.timeoutMs,signal});
         const capturedAt=new Date().toISOString(), elapsedMs=performance.now()-started;
         // Frames intentionally span animation and scrolling. Bind freshness to the last frame,
         // before optional file writes, without requiring constant scroll across the sequence.
         if (i === count-1) geometry=await viewportGeometry(page,{signal,timeoutMs:operation().timeoutMs});
-        unsupported(tracking);
+        await this.unsupported(tracking);
         const size=imageSize(png);
         if (changed() || viewport && !dimensionsEqual(viewport,size))
           throw new BrowserError('STALE_SCREEN','The Page or viewport changed during capture. Look again before any input.');
@@ -319,7 +333,7 @@ export class ScreenController {
       this.observation = undefined;
       const page = this.page(), tracking = this.track(page);
       generation = tracking.generation;
-      unsupported(tracking);
+      await this.unsupported(tracking);
       if (previous && supplied !== undefined) {
         if (previous.page !== page || previous.generation !== tracking.generation || !dimensionsEqual(previous.configured, page.viewportSize()))
           throw new BrowserError('STALE_SCREEN', 'The screen observation is no longer current. Look again before any input.');
@@ -360,7 +374,7 @@ export class ScreenController {
         case 'reload': await page.reload({ waitUntil:'commit',timeout:op.timeoutMs,signal:op.signal }); break;
         case 'wait': await delay(request.milliseconds,undefined,{signal:operation().signal}); break;
       } });
-      unsupported(tracking);
+      await this.unsupported(tracking);
       // The image and its geometry must show where the wheel came to rest, or the next input would be judged stale.
       if (request.action === 'scroll' && !tracking.navigations.size && tracking.generation === generation) await scrollSettled(page,operation());
       let captured: Capture | undefined;
@@ -386,6 +400,8 @@ export class ScreenController {
       if (error instanceof BrowserError) throw error;
       if (!authorized) throw new BrowserError('SCREEN_FAILED','Screen authorization did not complete. No input was retried.');
       const reason=this.failure(error,generation,signal);
+      // The failure already names the dialog; dismissing it now lets the next observation continue.
+      if (reason === 'dialog') await this.dismissDialogs?.().catch(() => undefined);
       const failure=new BrowserError(effectStarted?'SCREEN_INTERRUPTED':'SCREEN_FAILED',effectStarted
         ?`The screen operation did not finish (${reason}); input may have reached the page. Look before deciding what to do next. No input was retried.`
         :`The screen could not be captured (${reason}). No input was retried.`+(['page-closed','page-crashed','dialog'].includes(reason) ? '' : ' Look again; while no current observation exists, back, forward and reload may omit observationId to recover.'));

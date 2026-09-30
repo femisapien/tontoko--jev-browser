@@ -12,7 +12,7 @@ import { actionCandidates, actionDescription, inputBindings, modelElement, resol
 import { flattenInputs } from './bindings.js';
 import { extractStructured } from './structured.js';
 import { NativeBrowser } from './native.js';
-import { ScreenController, type ScreenRequest, type ScreenResult } from './screen.js';
+import { ScreenController, screenDialogMessage, type ScreenRequest, type ScreenResult } from './screen.js';
 import { compareSemanticWork, elementEvidence, locateSemanticTargets, semanticThreshold } from './semantic.js';
 import { parseNative, nativeSchemas, nativeReadOnly, type NativeCommand } from './native-schemas.js';
 import type { ActionPlan, ActOptions, ActResult, BrowserOptions, BrowserLaunchOptions, ExtractResult, ExtractOptions, GoalCheckpoint, OperationOptions, ResumeOptions, RunOptions, RunResult, RunValue, Snapshot, SemanticEvidence, SemanticLocateOptions, SemanticTarget, SemanticActual, SemanticCompareOptions, SemanticComparisonRequest, SemanticComparisonResult } from './types.js';
@@ -175,8 +175,10 @@ export class JevBrowser {
     }, parsed.command);
   }
   private screenCore(): ScreenController {
-    // A pending native dialog is reported as the reason a capture failed.
-    return this.screenController ??= new ScreenController(() => this.page, this.options.outputDir, () => { try { this.nativeBrowser.guard(); return false; } catch { return true; } }, this.options, this.startedAt);
+    // A pending native dialog is reported as the reason a capture failed. Screen-only sessions cannot answer dialogs or switch tabs,
+    // so the controller reports each once, then dismisses the dialog or closes the popup tab to recover.
+    return this.screenController ??= new ScreenController(() => this.page, this.options.outputDir, () => { try { this.nativeBrowser.guard(); return false; } catch { return true; } }, this.options, this.startedAt,
+      this.screenOnly ? () => this.nativeBrowser.dismissDialogs() : undefined);
   }
   /** Tool-surface refusal. Direct SDK Page access remains trusted caller code. */
   async recordScreenDenied(command: string): Promise<void> {
@@ -192,7 +194,9 @@ export class JevBrowser {
           async action => {
             operation.effect = true;
             const result = await this.nativeBrowser.action(action);
-            if (result.status === 'dialog') throw new BrowserError('SCREEN_DIALOG_UNSUPPORTED', 'A browser-native dialog opened. It cannot be observed by this viewport tool; this is a tool capability limit, not a product failure.');
+            if (result.status !== 'dialog') return;
+            if (this.screenOnly) await this.nativeBrowser.dismissDialogs();
+            throw new BrowserError('SCREEN_DIALOG_UNSUPPORTED', screenDialogMessage(this.screenOnly));
           });
       } finally { await this.invalidatePlan(); }
     }, 'screen');
@@ -206,7 +210,8 @@ export class JevBrowser {
     // A closed selected tab is reported, never silently replaced: the caller chooses the next tab.
     // Screen tools have no tab selection and report the closed Page as their own failure reason.
     if (this.page.isClosed() && command !== 'tabs' && command !== 'screen') throw tabClosed();
-    this.nativeBrowser.guard(command);
+    // Screen-only sessions have no handle_dialog; the screen operation itself reports and dismisses a held dialog.
+    if (!(command === 'screen' && this.screenOnly)) this.nativeBrowser.guard(command);
     const timeoutMs = positiveInteger(options.timeoutMs ?? this.timeoutMs, 'timeoutMs'), budget = AbortSignal.timeout(timeoutMs);
     const signal = AbortSignal.any([this.lifetime.signal, budget, ...(options.signal ? [options.signal] : [])]);
     const operation: Operation = { signal, budget, deadline: performance.now() + timeoutMs, timeoutMs };
