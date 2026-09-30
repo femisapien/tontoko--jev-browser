@@ -50,7 +50,7 @@ export class JevDecisionEngine implements DecisionEngine {
       apiKey: apiKey ?? 'local',
       // Always explicit, so the SDK's own TYPESAFE_BASE_URL cannot redirect a hosted key.
       baseURL: url.href,
-      defaultModel: options.model ?? process.env.JEV_MODEL,
+      defaultModel: setting(options.model) ?? setting(process.env.JEV_MODEL),
       timeout: options.timeoutMs ?? 15_000,
       retry: { maxRetries: 0 },
       logLevel: 'off',
