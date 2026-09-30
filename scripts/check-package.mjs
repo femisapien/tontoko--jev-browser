@@ -13,6 +13,7 @@ import { checkInstalledSemantic } from './check-installed-semantic.mjs';
 import { checkInstalledResume } from './check-installed-resume.mjs';
 import { checkInstalledSelection } from './check-installed-selection.mjs';
 import { checkInstalledScreen } from './check-installed-screen.mjs';
+import { checkInstalledRunner } from './check-installed-runner.mjs';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -36,6 +37,8 @@ await writeFile(join(root, 'dist', 'pi.js'), '// stale adapter output\n');
 await writeFile(join(root, 'dist', 'pi.d.ts'), '// stale adapter declaration\n');
 const packed = JSON.parse((await run([npm, 'pack', '--json'])).stdout)[0];
 assert.ok(packed.files.some(f => f.path === 'dist/dom.bundle.cjs'));
+// Only the self-contained bundle is injected. The unbundled module would import a development dependency.
+assert.ok(!packed.files.some(f => f.path === 'dist/dom.js'));
 assert.ok(packed.files.some(f => f.path === 'dist/session-worker.js'));
 assert.ok(!packed.files.some(f => /^dist\/pi\.(?:js|d\.ts)(?:\.map)?$/.test(f.path)));
 assert.ok(!packed.files.some(f => f.path === 'docs/pi.md'));
@@ -51,6 +54,8 @@ try {
   const cli = args => run([join(pkg, 'dist', 'cli.js'), ...args], { cwd: directory, env });
   const version = await cli(['--version']); assert.equal(version.stdout.trim(), packed.version);
   if (process.platform !== 'win32') await access(join(directory, 'node_modules', '.bin', 'jev-browser'), constants.X_OK);
+  // Every installed check below then runs without the bundled DOM dependency.
+  await assert.rejects(access(join(directory, 'node_modules', 'dom-accessibility-api')), { code: 'ENOENT' });
   await run(['--input-type=module', '-e', `
     import assert from 'node:assert/strict';
     import { chromium } from 'playwright';
@@ -100,7 +105,8 @@ try {
   const resume = await checkInstalledResume(pkg,directory,env);
   const selections = await checkInstalledSelection(pkg,directory,env);
   const screen = await checkInstalledScreen(pkg,directory,env);
-  console.log(JSON.stringify({ ...goals, ...semantic, ...resume, ...selections, ...screen, package: packed.name, version: packed.version, filename: packed.filename, sha256: createHash('sha256').update(await readFile(tarball)).digest('hex'), installedSDK: true, nativePlaywrightAssertions: true, installedPersistentCLI: true, installedMCP: true, entryCount: packed.entryCount }, null, 2));
+  const runner = await checkInstalledRunner(npm,tarball,env);
+  console.log(JSON.stringify({ ...goals, ...semantic, ...resume, ...selections, ...screen, ...runner, package: packed.name, version: packed.version, filename: packed.filename, sha256: createHash('sha256').update(await readFile(tarball)).digest('hex'), installedSDK: true, nativePlaywrightAssertions: true, installedPersistentCLI: true, installedMCP: true, entryCount: packed.entryCount }, null, 2));
 } finally {
   if (site) { site.closeAllConnections(); await new Promise(resolve => site.close(resolve)); }
   await rm(directory, { recursive: true, force: true, maxRetries: 8, retryDelay: 125 });

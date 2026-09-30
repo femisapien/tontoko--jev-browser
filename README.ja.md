@@ -67,7 +67,7 @@ await browser.act('保存ボタンを押す');
 await expect(page.getByText('保存済み', { exact: true })).toBeVisible();
 ```
 
-借りた`Page`はSDKの`close()`で閉じません。既存のPlaywright Test、fixture、locator、アプリ固有のassertionと併用できます。
+借りた`Page`はSDKの`close()`で閉じません。既存のPlaywright Test、fixture、locator、アプリ固有のassertionと併用できます。SDKはPlaywright Testを読み込まないため、プロジェクトの`@playwright/test`が同梱のPlaywrightと別のバージョンでも使えます。
 
 ### 意味的な検索とconfidence付きassertion
 

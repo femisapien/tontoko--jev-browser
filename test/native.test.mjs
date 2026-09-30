@@ -49,6 +49,18 @@ test('native form filling select check and assertions preserve values',async t=>
  await core.native({command:'assert',target:'#name',property:'value',expected:'Teacher'});assert.equal(await page.locator('#plan').inputValue(),'b');assert.equal(await page.locator('#agree').isChecked(),true);
  await assert.rejects(core.native({command:'assert',target:'#name',property:'value',expected:'Wrong'}),{code:'ASSERTION_FAILED'});
 });
+test('native assertions raise target errors instead of reporting a mismatch',async t=>{
+ const {core}=await fixture(t,'<button>A</button><button>B</button>');
+ // Two matches are a caller error, not evidence that the element is hidden.
+ await assert.rejects(core.native({command:'assert',target:'button',property:'visible'}),error=>error.code!=='ASSERTION_FAILED'&&/strict mode violation/.test(error.message));
+ await core.native({command:'assert',target:'button >> nth=1',property:'text',expected:'B'});
+});
+test('a Playwright wait that times out inside the assertion window keeps polling as an unmet expectation',async t=>{
+ const {core,page}=await fixture(t,'<p>Start</p>');page.setDefaultTimeout(100);
+ await assert.rejects(core.native({command:'assert',target:'#missing',property:'text',expected:'Later'},{timeoutMs:1000}),{code:'ASSERTION_FAILED'});
+ await page.evaluate(()=>setTimeout(()=>document.body.insertAdjacentHTML('beforeend','<span id=later>Later</span>'),300));
+ await core.native({command:'assert',target:'#later',property:'text',expected:'Later'});
+});
 test('pending native dialogs can be answered after a click',async t=>{
  const {core,page}=await fixture(t,'<button onclick="document.body.dataset.answer=prompt(\'Name?\')">Prompt</button>');
  const result=await core.native({command:'click',target:'button'});assert.equal(result.status,'dialog');assert.equal(result.dialog.type,'prompt');

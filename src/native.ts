@@ -1,12 +1,29 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { ElementHandle, Locator, Route } from 'playwright';
-import { expect } from 'playwright/test';
 import { BrowserError } from './errors.js';
 import { publicURL } from './observation.js';
 import { BrowserEvents } from './browser-events.js';
 import type { ParsedNativeCommand } from './native-schemas.js';
 import type { OperationContext } from './types.js';
+const expired = Symbol('expired');
+/** expect.poll's intervals and deadline. Playwright Test itself is not loaded: it refuses to load beside a caller's own copy. */
+async function poll(read: () => Promise<unknown>, expected: unknown, timeoutMs: number, signal: AbortSignal): Promise<boolean> {
+  const deadline = performance.now() + timeoutMs;
+  for (let attempt = 0; ; attempt++) {
+    const race = new AbortController();
+    try {
+      if (attempt) { const interval = [100, 250, 500][attempt - 1] ?? 1000; if (performance.now() + interval >= deadline) return false; await delay(interval, undefined, { signal }); }
+      // Like expect.poll, a read still pending at the deadline is abandoned.
+      const actual = await Promise.race([read(), delay(Math.max(0, deadline - performance.now()), expired, { signal: AbortSignal.any([signal, race.signal]) })]);
+      if (actual === expired) return false;
+      if (Object.is(actual, expected)) return true;
+    } catch (error) {
+      // A Playwright wait that timed out is an unmet expectation. Other read errors, such as strict-mode violations, keep their cause.
+      signal.throwIfAborted(); if (!(error instanceof Error && error.name === 'TimeoutError')) throw error;
+    } finally { race.abort(); }
+  }
+}
 export class NativeBrowser extends BrowserEvents {
   async executeResolved(c: ParsedNativeCommand, target: Locator | ElementHandle<Element>, op: OperationContext): Promise<Record<string, unknown>> {
     const time = { timeout: op.timeoutMs, signal: op.signal }; op.signal.throwIfAborted();
@@ -151,8 +168,7 @@ export class NativeBrowser extends BrowserEvents {
             case 'count': return 'count' in t! ? (t as Locator).count() : (await (t as ElementHandle<Element>).evaluate(e => e.isConnected)) ? 1 : 0;
           }
         };
-        try { await expect.poll(actual, { timeout: Math.min(op.timeoutMs, 5000) }).toEqual(c.expected ?? true); }
-        catch { op.signal.throwIfAborted(); throw new BrowserError('ASSERTION_FAILED', `Native ${c.property} assertion did not match the expected value.`); }
+        if (!await poll(actual, c.expected ?? true, Math.min(op.timeoutMs, 5000), op.signal)) throw new BrowserError('ASSERTION_FAILED', `Native ${c.property} assertion did not match the expected value.`);
         return { status: 'complete', reason: 'verified' };
       }
     }
