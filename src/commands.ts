@@ -6,8 +6,8 @@ import { invalidScreenRequest, screenSchema } from './screen.js';
 
 // Node timers overflow above 2147483647 ms; the CLI applies the same bound to its integer options.
 const positiveInteger = z.number().int().positive().max(2_147_483_647);
-const timeoutMs = positiveInteger.optional().describe('Operation budget in milliseconds.');
-const scope = z.string().min(1).optional().describe('CSS selector limiting observation.');
+const timeoutMs = positiveInteger.optional().describe('Operation budget in milliseconds; running out fails with TIMEOUT.');
+const scope = z.string().min(1).optional().describe('CSS selector limiting observation. Fails with SCOPE_NOT_FOUND when it matches no element.');
 const instruction = z.string().trim().min(1);
 const values = z.record(z.string().min(1), z.string()).optional().describe('Named literal inputs, referred to by name in instruction. Values are withheld from Jev.');
 const runValues = z.record(z.string(),z.json()).optional();
@@ -45,7 +45,7 @@ export const commandSchemas = {
     instruction: instruction.describe('Goal to complete, e.g. add a contact and save it.'),
     values: runValues.describe('Nested JSON inputs, reported by JSON Pointer path. Values are withheld from Jev unless listed in semanticInputs.'),
     semanticInputs: z.record(z.string().regex(/^\/(?:[^~]|~[01])*$/),z.number().min(0).max(1)).optional().describe('JSON Pointer of a supplied value to a 0-1 threshold. Discloses that value so Jev may match it to differently worded options.'),
-    scope, maxSteps: positiveInteger.optional().describe('Browser action budget (default 100).'), maxDecisions: positiveInteger.optional().describe('Decision request budget (default 32).'),
+    scope: scope.describe('CSS selector limiting observation. Unlike browser_act, a scope matching nothing does not fail with SCOPE_NOT_FOUND.'), maxSteps: positiveInteger.optional().describe('Browser action budget (default 100).'), maxDecisions: positiveInteger.optional().describe('Decision request budget (default 32).'),
     decisionRetries: z.number().int().min(0).max(2).optional().describe('Retries per read-only decision request (default 2).'), settleTimeoutMs: positiveInteger.optional().describe('Longest wait for the page to settle after an action (default 2000).'), timeoutMs,
     expect: z.union([nativeSchemas.assert,z.array(nativeSchemas.assert).min(1)]).optional().describe('browser_assert conditions that must pass for a verified completion.'),
   }).strict(),

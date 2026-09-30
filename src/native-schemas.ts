@@ -5,7 +5,7 @@ import { BrowserError } from './errors.js';
 // Indexes share the 32-bit bound used for CLI and MCP integers instead of Number.MAX_SAFE_INTEGER.
 const index = z.number().int().nonnegative().max(2_147_483_647);
 const targetFields = {
-  target: z.string().min(1).optional().describe('Playwright selector or snapshot ref.'),
+  target: z.string().min(1).optional().describe('Playwright selector or snapshot ref. A selector matching several elements fails with AMBIGUOUS_TARGET.'),
   ref: z.string().min(1).optional().describe('Snapshot ref. Element commands need ref or target.'),
   element: z.string().optional().describe('Label for humans; not a selector.'),
   frame: index.optional().describe('browser_frames index for a selector.'),
@@ -37,7 +37,7 @@ export const nativeSchemas = {
   frames: z.object({}).strict(),
   handle_dialog: z.object({ accept: z.boolean().describe('Accept (true) or dismiss (false) the pending dialog.'), promptText: z.string().optional().describe('Text entered into a prompt dialog.') }).strict(),
   file_upload: z.object({ ...targetFields, paths: z.array(z.string()).describe('Local files within the configured file roots. Without ref or target, fills a chooser opened on the selected tab.') }).strict(),
-  downloads: z.object({ action: z.enum(['list', 'save', 'cancel']).describe('list, save to filename, or cancel.'), index: index.optional().describe("Index in the selected tab's download list. save and cancel need exactly one of index or id."), id: z.number().int().positive().optional().describe('Stable download id from list. save and cancel need exactly one of index or id.'), allTabs: allTabs.describe('list only: include downloads from every tab.'), filename }).strict().refine(v => v.action === 'list' || Number(v.index !== undefined) + Number(v.id !== undefined) === 1, { message: 'Provide exactly one download id or index.' }).refine(v => v.action === 'list' || v.allTabs === undefined, { message: 'allTabs applies only to list.' }),
+  downloads: z.object({ action: z.enum(['list', 'save', 'cancel']).describe('list, save to filename, or cancel.'), index: index.optional().describe("Index in the selected tab's download list. save and cancel need exactly one of index or id."), id: z.number().int().positive().max(2_147_483_647).optional().describe('Stable download id from list. save and cancel need exactly one of index or id.'), allTabs: allTabs.describe('list only: include downloads from every tab.'), filename }).strict().refine(v => v.action === 'list' || Number(v.index !== undefined) + Number(v.id !== undefined) === 1, { message: 'Provide exactly one download id or index.' }).refine(v => v.action === 'list' || v.allTabs === undefined, { message: 'allTabs applies only to list.' }),
   take_screenshot: z.object({ ...targetFields, filename, fullPage: z.boolean().optional().describe('Capture the whole scrollable page instead of the viewport. Page screenshots only.'), type: z.enum(['png', 'jpeg']).default('png').describe('Image format.') }).strict(),
   pdf: z.object({ filename, format: z.enum(['A4', 'Letter', 'Legal', 'A3', 'A5']).default('A4').describe('Paper size.'), printBackground: z.boolean().optional().describe('Include background graphics.') }).strict(),
   resize: z.object({ width: dimension.describe('Viewport width in CSS pixels.'), height: dimension.describe('Viewport height in CSS pixels.') }).strict(),
