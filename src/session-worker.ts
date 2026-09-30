@@ -7,8 +7,9 @@ import { publicURL } from './observation.js';
 import { executeCommand, parseCommand } from './commands.js';
 import { BrowserError, publicError } from './errors.js';
 import type { BrowserLaunchOptions } from './types.js';
+import { requireCapability, type Capability } from './capabilities.js';
 
-interface Start { name: string; directory: string; options: BrowserLaunchOptions; optionsHash: string; url?: string; idleTimeoutMs: number }
+interface Start { name: string; directory: string; options: BrowserLaunchOptions; optionsHash: string; url?: string; idleTimeoutMs: number; capabilities: Capability[] }
 process.once('message', async (input: Start) => {
   let core: JevBrowser | undefined, server: Server | undefined, idle: NodeJS.Timeout | undefined;
   let closing: Promise<void> | undefined;
@@ -49,10 +50,12 @@ process.once('message', async (input: Start) => {
         try { data = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new BrowserError('INVALID_ARGUMENT', 'Session commands must be valid JSON.'); }
         touch();
         if (typeof data === 'object' && data !== null && 'command' in data && data.command === 'health') {
-          respond(200, { ok: true, result: { session: input.name, status: 'open', screenOnly: core!.screenOnly } }); return;
+          respond(200, { ok: true, result: { session: input.name, status: 'open', screenOnly: core!.screenOnly, capabilities: input.capabilities } }); return;
         }
         const command = parseCommand(data);
         if (command.command === 'close') { await close(); respond(200, { ok: true, result: { status: 'closed' } }); return; }
+        // Screen-only dispatch refuses (and journals) everything but screen/close itself.
+        if (!core!.screenOnly) requireCapability(input.capabilities, command.command);
         const result = await executeCommand(core!, command, abort.signal);
         if (!res.destroyed) respond(200, { ok: true, result });
       } catch (error) {

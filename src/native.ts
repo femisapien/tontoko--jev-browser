@@ -112,14 +112,14 @@ export class NativeBrowser extends BrowserEvents {
       case 'console_messages': { const levels = c.level === 'error' ? ['error'] : c.level === 'warning' ? ['error', 'warning', 'warn'] : undefined; return { messages: this.scoped(this.messages, c.allTabs, c.clear).filter(m => !levels || levels.includes(m.type)) }; }
       case 'network_requests': return { requests: this.scoped(this.requests, c.allTabs, c.clear) };
       case 'evaluate': {
-        if (!this.options.allowEvaluate) throw new BrowserError('CAPABILITY_DISABLED', 'Page evaluation requires allowEvaluate / --allow-evaluate.');
+        if (!this.options.allowEvaluate) throw new BrowserError('CAPABILITY_DISABLED', 'Page evaluation requires allowEvaluate / --caps evaluate.');
         if (c.target || c.ref) throw new BrowserError('INVALID_ARGUMENT', 'Evaluation accepts a page function. Use a selector inside that function, or the SDK Page for element callbacks.');
         // This expression is evaluated by Playwright in the page, never as Node code.
         const value = await page.evaluate(`(${c.function})(${JSON.stringify(c.arg ?? null)})`);
         return { value: value ?? null };
       }
       case 'init_script': {
-        if (!this.options.allowEvaluate) throw new BrowserError('CAPABILITY_DISABLED', 'Init scripts require allowEvaluate / --allow-evaluate.');
+        if (!this.options.allowEvaluate) throw new BrowserError('CAPABILITY_DISABLED', 'Init scripts require allowEvaluate / --caps evaluate.');
         await this.context.addInitScript({ content: c.script }); return { status: 'installed' };
       }
       case 'storage': {

@@ -4,15 +4,19 @@ import type { z } from 'zod';
 import type { JevBrowser } from './browser.js';
 import { commandSchemas, commandDescriptions, commandReadOnly, executeCommand, parseCommand, type Command, type CommandName } from './commands.js';
 import { publicError } from './errors.js';
+import { capabilityEnabled, type Capability } from './capabilities.js';
 import type { ScreenResult } from './screen.js';
 import { screenToolSchema } from './screen-tool.js';
 
-/** The caller owns the borrowed core, or its lazy factory's lifetime. Tool calls run one at a time, in arrival order. */
-export function createMcpServer(browser: JevBrowser | (() => Promise<JevBrowser>), options: { screenOnly?: boolean } = {}): McpServer {
+/**
+ * The caller owns the borrowed core, or its lazy factory's lifetime. Tool calls run one at a time, in arrival order.
+ * `capabilities` lists the enabled opt-in tool groups; tools of other groups are not registered. Omitted, every tool is registered.
+ */
+export function createMcpServer(browser: JevBrowser | (() => Promise<JevBrowser>), options: { screenOnly?: boolean; capabilities?: readonly Capability[] } = {}): McpServer {
   const server = new McpServer({ name: 'jev-browser', version });
   const screenOnly = typeof browser === 'function' ? options.screenOnly === true : browser.screenOnly;
   let started = typeof browser !== 'function';
-  const names: CommandName[] = screenOnly ? ['screen', 'close'] : Object.keys(commandSchemas) as CommandName[];
+  const names: CommandName[] = screenOnly ? ['screen', 'close'] : (Object.keys(commandSchemas) as CommandName[]).filter(name => capabilityEnabled(options.capabilities, name));
   // The core is exclusive and answers BUSY; clients commonly send parallel calls, so they wait here instead.
   let queue = Promise.resolve();
   const serial = async <T>(signal: AbortSignal, task: () => Promise<T>): Promise<T> => {

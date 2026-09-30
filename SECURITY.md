@@ -24,7 +24,7 @@ Native operations, screenshots, assertions, navigation, and tool discovery do no
 
 ## Files and profiles
 
-Native uploads default to the current working directory as their read root; use a dedicated `--file-root` for tighter access. Explicit launch options such as `--storage-state` and `--user-data-dir` grant access to the specified profile. Use test profiles, not your daily browser profile. An `--options-file` has the same authority as flags: its Playwright launch and context options can choose the browser executable and arguments, proxies, recordings and HTTP credentials. MCP tool calls cannot change launch options.
+CLI and MCP uploads have no read root unless `--file-root DIR` is given (`--file-root .` allows the working directory); use a dedicated directory. The SDK's `fileRoots` defaults to the current working directory. Explicit launch options such as `--storage-state` and `--user-data-dir` grant access to the specified profile. Use test profiles, not your daily browser profile. An `--options-file` has the same authority as flags: its Playwright launch and context options can choose the browser executable and arguments, proxies, recordings and HTTP credentials. MCP tool calls cannot change launch options.
 
 Artifacts default to `.jev-browser/artifacts`. Traversal, existing output paths and symlinked intermediate directories are refused. Inputs are resolved before checking allowed roots. These checks do not defend against a malicious local process running as the same OS user. Do not place secrets or build credentials in file roots exposed to an automation client.
 
@@ -34,7 +34,7 @@ Named CLI sessions listen only on loopback and require a randomly generated bear
 
 An unavailable session does not cause a browser action to be replayed. A dead worker descriptor can be reclaimed by `open` only after the owning process is no longer present. Live or unidentifiable processes are never killed during recovery. Incomplete or damaged metadata may require manual cleanup after verifying no session is running.
 
-`--allow-evaluate` / `allowEvaluate` enables caller-authored code in the browser realm and init scripts. It is off by default and is not a security sandbox. No native command evaluates arbitrary Node-side code. Trusted SDK users have normal Playwright access and can write Node code in their own application.
+The CLI and MCP server leave cookie/storage access, request routing, tracing and page evaluation disabled unless `--caps storage`, `network`, `trace` or `evaluate` enables them; disabled MCP tools are not listed. A named session keeps the capabilities it was opened with. `--caps evaluate` (alias `--allow-evaluate`) / `allowEvaluate` enables caller-authored code in the browser realm and init scripts. It is off by default and is not a security sandbox. No native command evaluates arbitrary Node-side code. Trusted SDK users have normal Playwright access and can write Node code in their own application.
 
 ## Cancellation, refs and completion
 

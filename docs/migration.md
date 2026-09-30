@@ -155,6 +155,44 @@ The upstream SDK's `TYPESAFE_BASE_URL` no longer redirects this library; use
 `JEV_BASE_URL`. Empty key variables, such as `JEV_API_KEY=` from
 `.env.example`, now count as unset.
 
+## CLI/MCP capabilities and upload roots (next release)
+
+The CLI and MCP server now start with a smaller tool surface, like
+`@playwright/mcp`. Opt-in tools are enabled with `--caps`, a comma-separated
+list (the flag may also be repeated):
+
+| Capability | Tools |
+| --- | --- |
+| `storage` | `cookies`, `storage`, `storage_state` |
+| `network` | `route` |
+| `trace` | `trace` |
+| `evaluate` | `evaluate`, `init_script` |
+
+A disabled tool is not listed by the MCP server, and the CLI answers
+`CAPABILITY_DISABLED`. Other tools, including `console_messages`,
+`network_requests` (method, URL without query and resource type only),
+`pdf`, `downloads` and screenshots, stay enabled. `--allow-evaluate` still works
+and means `--caps evaluate`. A named session keeps the capabilities it was
+opened with: `--caps` on a later command does not change them, and `open` of an
+existing session with a different set fails with `SESSION_MODE_MISMATCH`. Close
+the session, or use another name.
+
+`file_upload` in the CLI and MCP server no longer reads from the working
+directory by default. Without `--file-root DIR` it fails with
+`FILE_ACCESS_DENIED`; `--file-root .` restores the previous behavior. Prefer a
+dedicated directory that holds only the files to upload.
+
+For example, an MCP client configuration that used cookies and uploads before:
+
+```json
+"args": [".../mcp-stdio.js", "--caps", "storage", "--file-root", "/absolute/path/uploads"]
+```
+
+The SDK is unchanged: `JevBrowser` dispatch is not gated, `allowEvaluate` still
+controls evaluation, and `fileRoots` still defaults to the working directory.
+`createMcpServer()` registers every tool unless you pass its new
+`capabilities` option.
+
 ## Observation scope and long text (next release)
 
 An explicit `scope` that matches no element in any frame now fails with
@@ -212,8 +250,10 @@ the launch options differ, where earlier releases reused the session and ignored
 the new options. Launch options are every flag and `--options-file` field that
 configures the browser or core, such as `--browser`, `--headed`, `--viewport`,
 `--locale`, `--storage-state`, `--user-data-dir`, `--cdp-endpoint`,
-`--timeout-ms`, `--max-elements`, `--file-root` and `--allow-evaluate`; the URL
-and `--idle-timeout-ms` are not. Repeat the original options to reuse the
+`--timeout-ms`, `--max-elements`, `--file-root`, `--caps` and `--allow-evaluate`;
+the URL and `--idle-timeout-ms` are not. A session started by an older release
+records no launch options and does not enforce `--caps`, so reopening it also
+fails with `SESSION_MODE_MISMATCH`; close it and open it again. Repeat the original options to reuse the
 session, or `close --session NAME` and open it again. Commands other than
 `open`, such as `snapshot --session NAME`, are unaffected.
 
