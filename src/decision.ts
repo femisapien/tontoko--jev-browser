@@ -30,6 +30,26 @@ const wireResult = z.object({
   model: z.string(),
   usage: z.object({ input_tokens: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative() }),
 });
+/** The whole-request budget shared by every decision call, measured on the wire form. */
+export const DECISION_REQUEST_BYTES = 128 * 1024;
+type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+const omitMainFrame = (value: Json): void => {
+  if (Array.isArray(value)) { for (const item of value) omitMainFrame(item); return; }
+  if (typeof value !== 'object' || value === null) return;
+  if (value.frame === 0) delete value.frame;
+  for (const child of Object.values(value)) omitMainFrame(child);
+};
+/**
+ * The form sent to Jev: `frame: 0` (the main frame) is omitted, and nothing else changes.
+ * Every other field, value and key order stays exactly as built, because the model is sensitive to request shape.
+ */
+export function wireDecisionRequest(request: DecisionRequest): DecisionRequest {
+  const copy = JSON.parse(JSON.stringify(request)) as { state: Json; questions: Record<string, { criteria?: Json }> };
+  omitMainFrame(copy.state);
+  for (const question of Object.values(copy.questions)) if (question.criteria !== undefined) omitMainFrame(question.criteria);
+  return copy as unknown as DecisionRequest;
+}
+export const decisionRequestBytes = (request: DecisionRequest): number => Buffer.byteLength(JSON.stringify(wireDecisionRequest(request)));
 const hostedOrigin = 'https://api.typesafe.ai';
 /** Empty or whitespace-only settings are unset, matching `.env` files that leave a key blank. */
 export const setting = (value: string | undefined) => value?.trim() || undefined;
@@ -62,7 +82,7 @@ export class JevDecisionEngine implements DecisionEngine {
     const start = performance.now();
     let raw: unknown;
     try {
-      raw = await this.client.systemOne(request, { signal: options.signal, retry: { maxRetries: options.maxRetries ?? 0 } });
+      raw = await this.client.systemOne(wireDecisionRequest(request), { signal: options.signal, retry: { maxRetries: options.maxRetries ?? 0 } });
     } catch (error) {
       if (options.signal?.aborted) throw new BrowserError('CANCELLED', 'Jev decision cancelled.', { cause: error });
       const status = typeof error === 'object' && error !== null && 'status' in error && typeof error.status === 'number' ? error.status : undefined;

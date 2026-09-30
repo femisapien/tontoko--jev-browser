@@ -117,13 +117,15 @@ export function progressChanged(previous?: string): string | boolean {
 }
 const actionableRoles = new Set(['button','link','textbox','searchbox','checkbox','radio','switch','combobox','listbox','menuitem','menuitemcheckbox','menuitemradio','tab','option']);
 export type SemanticTextKind = 'text' | 'href' | 'checked';
-export function observe(options: { maxElements: number; maxTexts: number }, scopedRoots?: Element[], explicitRecords?: Element[], excludedRoots?: Element[]) {
+export function observe(options: { maxElements: number; maxTexts: number; maxHrefs?: number }, scopedRoots?: Element[], explicitRecords?: Element[], excludedRoots?: Element[]) {
   const nodes: Element[] = [];
   const elements: ReturnType<typeof describe>[] = [];
   const texts: { text: string; context: string; role: string; value?: boolean; attribute?: string; truncated?: boolean }[] = [];
   const textNodes: Element[] = [];
   const textKinds: SemanticTextKind[] = [];
-  let truncatedElements = false, truncatedTexts = false, scanned = 0;
+  // Link URLs have their own budget so they never crowd displayed text out of maxTexts.
+  let truncatedElements = false, truncatedTexts = false, scanned = 0, displayed = 0, hrefs = 0;
+  const maxHrefs = options.maxHrefs ?? options.maxTexts;
   const roots: (Element | Document | ShadowRoot)[] = scopedRoots ? [...scopedRoots] : [document];
   const visited = new Set<Element>();
   for (let r = 0; r < roots.length; r++) {
@@ -145,17 +147,17 @@ export function observe(options: { maxElements: number; maxTexts: number }, scop
       // Eligibility is shared with progress waits; retain original displayed text.
       const text = observedText(el,role);
       if (text !== undefined) {
-        if (texts.length >= options.maxTexts) truncatedTexts = true;
-        else { textKinds.push('text'); textNodes.push(el); texts.push({ text: shortened(text), context: context(el), role, ...(text.length > maxTextLength ? { truncated: true } : {}) }); }
+        if (displayed >= options.maxTexts) truncatedTexts = true;
+        else { displayed++; textKinds.push('text'); textNodes.push(el); texts.push({ text: shortened(text), context: context(el), role, ...(text.length > maxTextLength ? { truncated: true } : {}) }); }
       }
       if (el instanceof HTMLAnchorElement && el.hasAttribute('href')) {
-        if (texts.length >= options.maxTexts) truncatedTexts = true;
-        else { textKinds.push('href'); textNodes.push(el); texts.push({ text: el.href, context: `${computeAccessibleName(el)} ${context(el)}`, role: 'link', attribute: 'href' }); }
+        if (hrefs >= maxHrefs) truncatedTexts = true;
+        else { hrefs++; textKinds.push('href'); textNodes.push(el); texts.push({ text: el.href, context: `${computeAccessibleName(el)} ${context(el)}`, role: 'link', attribute: 'href' }); }
       }
       if (['checkbox','radio','switch'].includes(role)) {
         const d = describe(el);
-        if (texts.length >= options.maxTexts) truncatedTexts = true;
-        else { textKinds.push('checked'); textNodes.push(el); texts.push({ text: d.info.name, context: d.info.context, role, ...(typeof d.info.checked === 'boolean' ? { value: d.info.checked } : {}) }); }
+        if (displayed >= options.maxTexts) truncatedTexts = true;
+        else { displayed++; textKinds.push('checked'); textNodes.push(el); texts.push({ text: d.info.name, context: d.info.context, role, ...(typeof d.info.checked === 'boolean' ? { value: d.info.checked } : {}) }); }
       }
     }
     if (scanned > 6000) break;
