@@ -1,7 +1,7 @@
 import { BrowserError } from './errors.js';
 import { modelElementId } from './actions.js';
 import type { DecisionRequest } from './decision.js';
-import type { Frame } from 'playwright';
+import type { Frame } from 'playwright-core';
 import type { ElementRef } from './observation.js';
 import type { ElementInfo, GroundedAction, RunValue, RunInput, Snapshot } from './types.js';
 

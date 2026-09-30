@@ -2,7 +2,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
-import { chromium } from 'playwright';
+import { chromium } from 'playwright-core';
 import { JevBrowser } from '../dist/index.js';
 let browser;
 before(async()=>{assert.ok(process.env.JEV_API_KEY||process.env.TYPESAFE_API_KEY);browser=await chromium.launch({headless:true});});

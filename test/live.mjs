@@ -1,7 +1,7 @@
 // Explicit opt-in live test. Only synthetic local fixture data is sent to Jev.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { chromium } from 'playwright';
+import { chromium } from 'playwright-core';
 import { z } from 'zod';
 import { JevBrowser } from '../dist/index.js';
 

@@ -1,4 +1,4 @@
-import type { Locator } from 'playwright';
+import type { Locator } from 'playwright-core';
 import type { JevBrowser } from './browser.js';
 import { BrowserError } from './errors.js';
 import type { SemanticCompareOptions, SemanticComparisonResult, SemanticLocatorProperty } from './types.js';

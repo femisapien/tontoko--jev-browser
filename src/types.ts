@@ -1,4 +1,4 @@
-import type { Page, Locator, LaunchOptions, BrowserContextOptions } from 'playwright';
+import type { Page, Locator, LaunchOptions, BrowserContextOptions } from 'playwright-core';
 import type { NativeCommand } from './native-schemas.js';
 import type { DecisionEngine, DecisionResult, JevOptions } from './decision.js';
 

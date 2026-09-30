@@ -47,7 +47,7 @@ export async function checkInstalledSemantic(pkg,directory,baseEnv){
       import assert from 'node:assert/strict';
       import {JevBrowser} from '@tontoko/jev-browser';
       import {semanticMatchers} from '@tontoko/jev-browser/playwright';
-      import {expect as baseExpect} from 'playwright/test';
+      import {expect as baseExpect} from '@playwright/test';
       const core=await JevBrowser.launch();
       try{
         await core.goto(process.argv[1]);

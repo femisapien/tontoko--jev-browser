@@ -23,7 +23,7 @@ const help = `jev-browser — grounded Jev decisions and native Playwright, one 
   jev-browser sessions                  List sessions for this working directory
   jev-browser session                   JSONL stdin commands, one browser
   jev-browser mcp                       Official MCP stdio server
-  jev-browser install [BROWSER]         Install the browser build this package's Playwright needs
+  jev-browser install [BROWSER]         Install the browser build the resolved playwright-core needs
 
 All native commands accept --args JSON. 'call COMMAND --args JSON' is equivalent.
 Aliases: open, fill, press, select, uncheck, back, forward, upload, screenshot-file.

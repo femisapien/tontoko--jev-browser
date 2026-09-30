@@ -1,4 +1,4 @@
-import type { BrowserContext, ConsoleMessage, Dialog, Download, ElementHandle, FileChooser, Frame, Locator, Page, Request, Route } from 'playwright';
+import type { BrowserContext, ConsoleMessage, Dialog, Download, ElementHandle, FileChooser, Frame, Locator, Page, Request, Route } from 'playwright-core';
 import { BrowserError } from './errors.js';
 import { FileAccess } from './paths.js';
 import { publicURL } from './observation.js';

@@ -1,4 +1,4 @@
-import type { Page } from 'playwright';
+import type { Page } from 'playwright-core';
 import type { DecisionRequest, DecisionResult } from './decision.js';
 import type { Captured } from './observation.js';
 import { waitForFrameProgress } from './observation.js';

@@ -171,3 +171,27 @@ toward `maxTexts`, so a page with many long paragraphs can reach
 `OBSERVATION_LIMIT` sooner; narrow `scope` or raise `maxTexts`. Read the full
 text of a known element with a Playwright Locator (for example a semantic
 `{locator, property: 'text'}` actual) rather than from a truncated source.
+
+## Playwright and Zod peer dependencies (next release)
+
+`playwright` and `zod` were bundled dependencies. They are now peer
+dependencies: `playwright-core` `>=1.62.0 <2` and `zod` `^4.2.0`. The package
+uses your project's copies, so a Page from your own Playwright or
+`@playwright/test` and a Zod schema from your own `zod` are the same
+implementation the SDK uses. Operation cancellation needs AbortSignal support,
+which `playwright-core` added in 1.62; `z.fromJSONSchema` needs Zod 4.2.
+
+- npm 7+ and pnpm install missing peers automatically, choosing the newest
+  matching release. To share one `playwright-core` with an older
+  `@playwright/test`, pin it to the same version
+  (`npm install -D playwright-core@1.62.0` next to `@playwright/test@1.62.0`).
+  `npm ls playwright-core zod` shows what is resolved.
+- Yarn Berry does not install peers: run `yarn add -D playwright-core zod`
+  next to the tarball.
+- A project on `@playwright/test` older than 1.62 must upgrade it. An older
+  resolved `playwright-core` makes `new JevBrowser()` and
+  `JevBrowser.launch()` fail with `CONFIG`, naming the version found.
+- `jev-browser install` now installs the browser build of the resolved
+  (your) `playwright-core`, the same one `npx playwright install` installs.
+- Import Playwright APIs in your own code from your own `playwright`,
+  `playwright-core` or `@playwright/test`; this package never provided them.

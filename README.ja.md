@@ -18,6 +18,8 @@ npx jev-browser snapshot --session work
 npx jev-browser close --session work
 ```
 
+`playwright-core`（`>=1.62.0 <2`）と`zod`（`^4.2.0`）はpeer dependencyで、プロジェクト側のものを共有します。npm 7以降とpnpmは不足したpeerを自動で導入します。Yarn Berryでは`yarn add -D ./tontoko-jev-browser-<version>.tgz playwright-core zod`のように明示的に追加してください。1.62未満の`playwright-core`は`CONFIG`エラーになります。
+
 `open`で作成した名前付きセッションは、別々のCLI呼び出しでもブラウザー状態を維持します。全コマンドは`--args JSON`で呼び出せます。MCPでは同じ操作を`browser_click`、`browser_type`、`browser_assert`などのツールとして公開します。
 
 CLIとMCPサーバーでは、`--viewport 390x844`、`--reduced-motion`、`--color-scheme dark`、`--locale ja-JP`でPlaywrightのcontext設定を指定できます。device設定などは`--options-file FILE`のJSON（`launchOptions`、`contextOptions`など`JevBrowser.launch()`の起動設定）で渡し、明示したフラグが優先されます。MCPの並列ツール呼び出しは`BUSY`にせず、到着順に1つずつ実行します。

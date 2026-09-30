@@ -1,7 +1,7 @@
 import { parseArgs } from 'node:util';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
-import type { BrowserContextOptions } from 'playwright';
+import type { BrowserContextOptions } from 'playwright-core';
 import { BrowserError } from './errors.js';
 import { parseCommand } from './commands.js';
 import type { BrowserLaunchOptions } from './types.js';

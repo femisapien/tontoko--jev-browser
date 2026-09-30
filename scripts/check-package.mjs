@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, access, mkdir, writeFile } from 'node:fs/promises';
-import { constants } from 'node:fs';
+import { constants, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,11 +13,12 @@ import { checkInstalledSemantic } from './check-installed-semantic.mjs';
 import { checkInstalledResume } from './check-installed-resume.mjs';
 import { checkInstalledSelection } from './check-installed-selection.mjs';
 import { checkInstalledScreen } from './check-installed-screen.mjs';
-import { checkInstalledRunner } from './check-installed-runner.mjs';
+import { checkInstalledRunner, checkInstalledMinimum } from './check-installed-runner.mjs';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const npm = process.env.npm_execpath;
+const { devDependencies } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 assert.ok(npm, 'Run this through npm run check:package.');
 async function run(args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -49,8 +50,13 @@ const directory = await mkdtemp(join(tmpdir(), 'jev-package-consumer-'));
 const env = { ...process.env, JEV_API_KEY: '', TYPESAFE_API_KEY: '', JEV_SESSION_DIR: join(directory, 'sessions') };
 let site;
 try {
+  // Standalone: npm installs the peers (playwright-core, zod) itself; the full playwright package is not needed.
   await run([npm, 'install', '--ignore-scripts', '--no-audit', '--no-fund', tarball], { cwd: directory, env });
   const pkg = join(directory, 'node_modules', '@tontoko', 'jev-browser');
+  const installed = name => JSON.parse(readFileSync(join(directory, 'node_modules', name, 'package.json'), 'utf8')).version;
+  assert.equal(installed('playwright-core'), devDependencies['playwright-core']);
+  assert.equal(installed('zod').split('.')[0], '4');
+  await assert.rejects(access(join(directory, 'node_modules', 'playwright')), { code: 'ENOENT' });
   const cli = args => run([join(pkg, 'dist', 'cli.js'), ...args], { cwd: directory, env });
   const version = await cli(['--version']); assert.equal(version.stdout.trim(), packed.version);
   if (process.platform !== 'win32') await access(join(directory, 'node_modules', '.bin', 'jev-browser'), constants.X_OK);
@@ -58,8 +64,7 @@ try {
   await assert.rejects(access(join(directory, 'node_modules', 'dom-accessibility-api')), { code: 'ENOENT' });
   await run(['--input-type=module', '-e', `
     import assert from 'node:assert/strict';
-    import { chromium } from 'playwright';
-    import { expect } from 'playwright/test';
+    import { chromium } from 'playwright-core';
     import { JevBrowser } from '@tontoko/jev-browser';
     import { z } from 'zod';
     assert.throws(() => import.meta.resolve('@tontoko/jev-browser/pi'), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
@@ -76,7 +81,7 @@ try {
       await page.setContent('<h1>Pending</h1><button>Save</button>');
       await page.locator('button').evaluate(e => e.onclick = () => document.querySelector('h1').textContent = 'Saved');
       await core.act('Click Save');
-      await expect(page.getByRole('heading')).toHaveText('Saved');
+      assert.equal(await page.getByRole('heading').textContent(), 'Saved');
       const result = await core.extract('Heading', z.object({ title: z.string() }), { scope: 'h1' });
       assert.equal(result.data.title, 'Saved');
       await core.close(); assert.equal(page.isClosed(), false);
@@ -100,13 +105,16 @@ try {
       const result = await client.callTool({ name, arguments: args }); assert.notEqual(result.isError, true, JSON.stringify(result));
     }
   } finally { await client.close(); }
+  // Later checks use the caller's Playwright Test, as a test project would.
+  await run([npm, 'install', '--ignore-scripts', '--no-audit', '--no-fund', `@playwright/test@${devDependencies['@playwright/test']}`], { cwd: directory, env });
   const goals = await checkInstalledGoal(pkg,directory,env);
   const semantic = await checkInstalledSemantic(pkg,directory,env);
   const resume = await checkInstalledResume(pkg,directory,env);
   const selections = await checkInstalledSelection(pkg,directory,env);
   const screen = await checkInstalledScreen(pkg,directory,env);
   const runner = await checkInstalledRunner(npm,tarball,env);
-  console.log(JSON.stringify({ ...goals, ...semantic, ...resume, ...selections, ...screen, ...runner, package: packed.name, version: packed.version, filename: packed.filename, sha256: createHash('sha256').update(await readFile(tarball)).digest('hex'), installedSDK: true, nativePlaywrightAssertions: true, installedPersistentCLI: true, installedMCP: true, entryCount: packed.entryCount }, null, 2));
+  const minimum = await checkInstalledMinimum(npm,tarball,env);
+  console.log(JSON.stringify({ ...goals, ...semantic, ...resume, ...selections, ...screen, ...runner, ...minimum, package: packed.name, version: packed.version, filename: packed.filename, sha256: createHash('sha256').update(await readFile(tarball)).digest('hex'), installedSDK: true, nativePlaywrightAssertions: true, installedPersistentCLI: true, installedMCP: true, entryCount: packed.entryCount }, null, 2));
 } finally {
   if (site) { site.closeAllConnections(); await new Promise(resolve => site.close(resolve)); }
   await rm(directory, { recursive: true, force: true, maxRetries: 8, retryDelay: 125 });
