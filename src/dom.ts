@@ -9,13 +9,32 @@ function inert(el: Element): boolean {
 }
 const visible = (el: Element) => !inert(el) && !isInaccessible(el) && el.getClientRects().length > 0;
 const editableHost = (el: Element) => el instanceof HTMLElement && el.isContentEditable && !(el.parentElement instanceof HTMLElement && el.parentElement.isContentEditable);
+/** Editable content and native option labels are values, not surrounding context. */
+const valueHost = (el: Element) => ['SELECT','DATALIST','OPTION','OPTGROUP','TEXTAREA','INPUT'].includes(el.tagName) || el instanceof HTMLElement && el.isContentEditable;
+const valueHostSelector = 'select,datalist,option,textarea,input,[contenteditable]:not([contenteditable="false"])';
+/** Displayed text of a context group without the text of form controls or editors inside it. */
+function contextText(el: Element | null | undefined): string {
+  if (!(el instanceof HTMLElement) || valueHost(el)) return '';
+  if (!el.querySelector(valueHostSelector)) return el.innerText ?? '';
+  const parts: string[] = [], ownTextVisible = getComputedStyle(el).visibility === 'visible';
+  for (const node of el.childNodes) {
+    if (node.nodeType === Node.TEXT_NODE) { if (ownTextVisible) parts.push(node.textContent ?? ''); continue; }
+    if (!(node instanceof HTMLElement)) continue;
+    const style = getComputedStyle(node);
+    if (style.display === 'none') continue;
+    // Inline children join without a separator, like innerText; block children are separated.
+    const text = contextText(node);
+    parts.push(style.display.startsWith('inline') ? text : ` ${text} `);
+  }
+  return parts.join('');
+}
 function context(el: Element): string {
   const definition = el.closest('dd');
   const term = definition?.previousElementSibling;
-  if (term?.tagName === 'DT') return normalize(`${(term as HTMLElement).innerText} ${(definition as HTMLElement).innerText}`).slice(0, 500);
+  if (term?.tagName === 'DT') return normalize(`${contextText(term)} ${contextText(definition)}`).slice(0, 500);
   const group = el.closest('tr,[role="row"],li,[role="listitem"]')
     ?? el.closest('fieldset,form,article,section,[role="dialog"]') ?? el.parentElement;
-  return normalize((group as HTMLElement | null)?.innerText).slice(0, 500);
+  return normalize(contextText(group)).slice(0, 500);
 }
 function isFillable(el: Element): boolean {
   if (el instanceof HTMLTextAreaElement || editableHost(el)) return true;
@@ -142,7 +161,7 @@ export function observe(options: { maxElements: number; maxTexts: number }, scop
   const recordNodes = (explicitRecords ?? [...visited].filter(el => el.matches('tbody tr,[role="row"],li,[role="listitem"],article'))).filter(el => visited.has(el) && visible(el));
   const records = recordNodes.map((el, index) => {
     const parent = recordNodes.findIndex(other => other !== el && other.contains(el) && !recordNodes.some(between => between !== other && between !== el && other.contains(between) && between.contains(el)));
-    return { index, parent: parent < 0 ? undefined : parent, readOnly: !el.matches('form,input,textarea,select,[contenteditable="true"]') && !el.querySelector('input,textarea,select,[contenteditable="true"]'), context: normalize((el as HTMLElement).innerText).slice(0, 1000), texts: textNodes.flatMap((node, i) => el === node || el.contains(node) ? [i] : []) };
+    return { index, parent: parent < 0 ? undefined : parent, readOnly: !el.matches('form,input,textarea,select,[contenteditable="true"]') && !el.querySelector('input,textarea,select,[contenteditable="true"]'), context: normalize(contextText(el)).slice(0, 1000), texts: textNodes.flatMap((node, i) => el === node || el.contains(node) ? [i] : []) };
   });
   return { nodes, textNodes, textKinds, elements, texts, records, recordInventoryComplete:scanned<=6000, truncatedElements, truncatedTexts, changeKey: String(progressChanged()), busy: !!document.querySelector('[aria-busy="true"]') };
 }
