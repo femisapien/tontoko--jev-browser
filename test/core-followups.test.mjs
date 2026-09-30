@@ -119,3 +119,11 @@ test('a closed selected tab is TAB_CLOSED until another tab is selected; Jev doe
  await core.native({command:'tabs',action:'select',index:0});
  assert.equal(core.page,page);assert.match((await core.snapshot()).url,/\/a$/);
 });
+
+test('a dialog payload names the tab that opened it',async t=>{
+ const {core,page}=await fixture(t);await page.setContent('<button onclick="confirm(\'Sure?\')">Go</button>');
+ const [tab]=(await core.native({command:'tabs',action:'list'})).tabs;
+ const result=await core.native({command:'click',target:'button'});
+ assert.equal(result.status,'dialog');assert.equal(result.dialog.pageId,tab.pageId);
+ await core.native({command:'handle_dialog',accept:false});
+});

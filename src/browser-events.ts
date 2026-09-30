@@ -28,6 +28,7 @@ export class BrowserEvents {
   protected dialog?: Dialog;
   private dialogId = 0;
   private dialogPage?: Page;
+  private dialogPageId?: number;
   protected dialogNotice?: () => void;
   protected pendingAction?: Promise<void>;
   protected traceStarted = false;
@@ -53,7 +54,7 @@ export class BrowserEvents {
     const onError = (e: Error) => push(this.messages, { type: 'error', text: e.message, url: publicURL(page.url()), pageId: tracked.id }, 500);
     const onRequest = (r: Request) => push(this.requests, { method: r.method(), url: publicURL(r.url()), resourceType: r.resourceType(), pageId: tracked.id }, 1000);
     const onDownload = (d: Download) => push(this.downloads, { id: ++this.downloadCount, pageId: tracked.id, download: d }, 100);
-    const onDialog = (d: Dialog) => { this.dialog = d; this.dialogId++; this.dialogPage = page; this.dialogNotice?.(); };
+    const onDialog = (d: Dialog) => { this.dialog = d; this.dialogId++; this.dialogPage = page; this.dialogPageId = tracked.id; this.dialogNotice?.(); };
     const onChooser = (c: FileChooser) => { tracked.chooser = c; };
     // A chooser belongs to the document that opened it.
     const onNavigation = (frame: Frame) => { if (frame === page.mainFrame()) tracked.chooser = undefined; };
@@ -88,7 +89,7 @@ export class BrowserEvents {
   }
   private dialogResult(): ActionOutcome {
     const d = this.dialog!;
-    return { status: 'dialog', dialog: { id: this.dialogId, type: d.type(), message: d.message(), defaultValue: d.defaultValue() } };
+    return { status: 'dialog', dialog: { id: this.dialogId, type: d.type(), message: d.message(), defaultValue: d.defaultValue(), pageId: this.dialogPageId! } };
   }
   async action(fn: () => Promise<unknown>): Promise<ActionOutcome> {
     this.guard();

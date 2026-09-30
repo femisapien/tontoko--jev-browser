@@ -75,7 +75,8 @@ export interface ActionPlan {
   confidence: number;
   decision: Omit<DecisionResult, 'answers'>;
 }
-export interface BrowserDialog { id: number; type: string; message: string; defaultValue: string }
+/** `pageId` names the tab that opened the dialog, matching `tabs` results; Jev always sets it. */
+export interface BrowserDialog { id: number; type: string; message: string; defaultValue: string; pageId?: number }
 export interface ActResult { status: 'executed' | 'dialog'; plan: ActionPlan; url: string; dialog?: BrowserDialog }
 export interface OperationOptions { signal?: AbortSignal; scope?: string; timeoutMs?: number }
 export interface SemanticLocateOptions extends OperationOptions { minConfidence?: number }

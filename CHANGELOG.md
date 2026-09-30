@@ -8,6 +8,7 @@
 - `run()` and `resume()` (CLI `run`/`resume`, MCP `browser_run`/`browser_resume`) reject an unparsable `scope` with `INVALID_SELECTOR` before observing, instead of `RUN_FAILED`.
 - A core keeps at most 32 paused continuations, dropping the least recently used, and drops a Page's continuations when that Page closes; a dropped ID fails with `CONTINUATION_NOT_FOUND`.
 - When the selected tab is closed outside a `tabs` command, operations fail with the new `TAB_CLOSED` code, which says to pick another tab with `tabs` `select`, instead of `OPERATION_FAILED`. Jev does not switch tabs by itself.
+- A pending `dialog` result now includes the `pageId` of the tab that opened it, matching `tabs` results.
 
 ## 0.12.2
 
