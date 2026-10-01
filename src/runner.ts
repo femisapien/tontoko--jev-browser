@@ -438,13 +438,17 @@ Input bindings listed in state.inputs are available locally, not missing. Their 
       if(steps.length>=maxSteps)return finish('stopped','step-limit');
       const carried: InputBinding[]=[];
       const advanceRef=kind==='advance'&&action.target?observed.refs.get(action.target.id):undefined;
+      let replaced=false;
       if(advanceRef){
         for(const input of inputs.filter(input=>input.applied&&input.ref))if(await sameNativeForm(input.ref!,advanceRef)){
           const expected=inputAction(input,input.ref!.info),state=await readControl(input.ref!);
+          // The form was replaced after the authority check: observe again, as for a stale authority, rather than report a validation failure.
+          if(!state.connected){replaced=true;break;}
           if(!expected||!matchesControl(state,expected.expected)||!state.valid)return finish('stopped','validation');
           carried.push(input);
         }
       }
+      if(replaced){lastRequest='';continue;}
       let beforeCommit:Map<string,number>|undefined=recordCounts(observed.data);
       if(kind==='commit'&&regionHistory.length){
         // Narrowing an input form must not make an old result elsewhere look newly created.

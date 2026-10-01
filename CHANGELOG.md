@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `run` combobox selection no longer fails with `NO_MATCH` when the matching option is already shown as a short `settleTimeoutMs` budget expires on a slow machine; the deadline is judged on the page, not on how many polls fit into it.
+- `run` observes again when the form it just authorized is replaced before an onward click, instead of stopping with reason `validation`.
+
 ## 0.14.1
 
 - A decision request that hosted Jev rejects as over its input token limit (HTTP 400 `max_tokens_exceeded`, which dense pages reach below the 128 KiB byte budget) now fails with non-retryable `OBSERVATION_LIMIT` and narrowing guidance instead of `PROVIDER_ERROR`, from `act`, `observe`, `run`, `extract` and semantic operations.
