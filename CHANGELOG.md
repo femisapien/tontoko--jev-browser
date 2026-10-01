@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.14.2
 
 - `run` combobox selection no longer fails with `NO_MATCH` when the matching option is already shown as a short `settleTimeoutMs` budget expires on a slow machine; the deadline is judged on the page, not on how many polls fit into it.
 - `run` observes again when the form it just authorized is replaced before an onward click, instead of stopping with reason `validation`.
