@@ -77,3 +77,16 @@ test('goal judgment: a no-action verdict made before new input effects is recons
   assert.equal(app.attempts.length,1);
   assert.deepEqual(app.records,[{'/name':'New contact','/email':'progress@example.invalid'}]);
 });
+
+test('goal judgment: a page with no input control never sends a one-criterion blocker_field question',async t=>{
+  const page=await browser.newPage();await page.setContent('<p>This page cannot be opened.</p>');
+  let asked;
+  const core=new JevBrowser({page,engine:{async decide(request){
+    if(request.questions.blocker){asked=request.questions;return {answers:{blocker:{choice:'missing',confidence:1}}};}
+    return {answers:Object.fromEntries(Object.keys(request.questions).map(id=>[id,{choice:id==='action'?'__none__':'commit',confidence:1}]))};
+  }}});
+  t.after(async()=>{await core.close();await page.close();});
+  const result=await core.run('Reply to the invitation',{settleTimeoutMs:20});
+  assert.ok(asked);assert.equal(asked.blocker_field,undefined);
+  assert.equal(result.status,'stopped');assert.equal(result.reason,'missing-input');
+});
