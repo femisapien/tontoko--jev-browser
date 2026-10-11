@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.15.1
+
+- `run` no longer sends the blocker diagnosis's `blocker_field` question on a page with no enabled fillable, select or combobox control. That question then had a single criterion (`__none__`), which Clef and System One reject with HTTP 422, so such a page failed with `PROVIDER_ERROR` instead of stopping with `missing-input` or `no-match`.
+
 ## 0.15.0
 
 - A Cloudflare Workers AI run URL for a System One model (for example `https://api.cloudflare.com/client/v4/accounts/<account>/ai/run/@cf/cloudflare/clef-flash`) is accepted as `baseURL` / `JEV_BASE_URL`: decisions are posted to that URL with the model's short name (`clef-flash`), the Cloudflare API token comes from `apiKey` or `JEV_ENDPOINT_API_KEY` (never a hosted Jev key), and the answer is read from the v4 envelope's `result`. A `success: false` or HTTP error is `PROVIDER_ERROR`, never an answer.
